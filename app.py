@@ -74,11 +74,20 @@ st.markdown("""
 
 st.title("Sistema de Gestión Judicial")
 
-# --- CONEXIÓN A POSTGRESQL (NEON) ---
-def conectar_bd():
-    # Toma la llave secreta que guardamos en Streamlit
+# --- CONEXIÓN A POSTGRESQL (NEON) CON CACHÉ ---
+@st.cache_resource(ttl="2h")
+def init_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
+def conectar_bd():
+    try:
+        conn = init_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        return conn
+    except Exception:
+        st.cache_resource.clear()
+        return init_connection()
 def limpiar_identificacion(texto):
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
