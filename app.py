@@ -100,29 +100,29 @@ st.markdown("""
         border-right: 1px solid #1c1c1e;
     }
     
-    /* --- AGRANDAR TEXTO Y TAMAÑO DE LOS BOTONES DEL MENÚ --- */
-    div[data-testid="stSidebar"] div.stRadio label p {
-        font-size: 18px !important; 
-        font-weight: 600 !important; 
-        padding: 14px 18px !important; 
-        margin-bottom: 8px !important; 
+ /* --- SUPER MENÚ LATERAL (BOTONES MÁS GRANDES Y SEPARADOS) --- */
+    div[data-testid="stSidebar"] .stRadio label {
+        padding: 12px 15px !important;
+        margin-bottom: 12px !important;
+        background-color: #111111 !important;
         border-radius: 10px !important;
-        transition: all 0.2s ease;
-        color: #e5e5ea;
+        border: 1px solid #2c2c2e !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease-in-out !important;
     }
-    
-    div[data-testid="stSidebar"] div.stRadio label p:hover {
-        background-color: #1c1c1e;
-        color: #0a84ff;
-        transform: translateX(3px);
-    }
-    
-    /* Personalización de los Selectbox en oscuro */
-    div[data-baseweb="select"] > div {
+
+    div[data-testid="stSidebar"] .stRadio label:hover {
         background-color: #1c1c1e !important;
-        border-color: #38383a !important;
+        border-color: #0a84ff !important;
+        transform: scale(1.02);
+    }
+
+    div[data-testid="stSidebar"] .stRadio label p, 
+    div[data-testid="stSidebar"] .stRadio label span {
+        font-size: 17px !important;
+        font-weight: 600 !important;
         color: #f2f2f7 !important;
-        border-radius: 10px !important;
+        margin-left: 5px !important;
     }
     </style>
 """, unsafe_allow_html=True)
