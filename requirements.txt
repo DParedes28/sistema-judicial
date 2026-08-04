@@ -3,3 +3,4 @@ pandas
 holidays
 openpyxl
 plotly
+streamlit-option-menu
