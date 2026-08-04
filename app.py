@@ -110,9 +110,14 @@ st.markdown("""
 
 st.title("Sistema de Gestión Judicial")
 
-# --- FUNCIONES DE BASE DE DATOS ---
+# --- FUNCIONES DE BASE DE DATOS Y LIMPIEZA ---
 def conectar_bd():
     return sqlite3.connect("firma_abogados.db")
+
+def limpiar_identificacion(texto):
+    """Elimina puntos, comas y espacios en blanco de las CC o NIT"""
+    if pd.isna(texto) or not texto: return ""
+    return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
 
 def crear_tablas():
     conn = conectar_bd()
@@ -274,7 +279,6 @@ def generar_radicado_interno():
         except: pass
     return f"EXP-{max_num + 1:04d}"
 
-# LISTA CLASIFICADA Y OFICIAL DE PROCESOS
 lista_procesos = [
     "EJECUTIVO SINGULAR", "EJECUTIVO HIPOTECARIO", "EJECUTIVO MIXTO", 
     "EJECUTIVO LABORAL", "EJECUTIVO CONTENCIOSO",
@@ -315,6 +319,12 @@ if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
 fk = st.session_state.form_key 
 
+# Variables dinámicas para litisconsorcios
+if 'num_dem_nuevos' not in st.session_state:
+    st.session_state.num_dem_nuevos = 0
+if 'num_ddo_nuevos' not in st.session_state:
+    st.session_state.num_ddo_nuevos = 0
+
 # ==========================================
 # SECCIÓN 0: INICIO (DASHBOARD GERENCIAL)
 # ==========================================
@@ -326,7 +336,6 @@ if menu == "Inicio":
     total_activos = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Activo'", conn).iloc[0]['c']
     total_terminados = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Terminado'", conn).iloc[0]['c']
     
-    # SOLO SUMA CAPITAL DE PROCESOS EJECUTIVOS ACTIVOS
     sum_pretensiones = pd.read_sql_query("SELECT SUM(pretensiones) as s FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%'", conn).iloc[0]['s']
     sum_pretensiones = sum_pretensiones if pd.notna(sum_pretensiones) else 0.0
     
@@ -430,8 +439,7 @@ elif menu == "Nuevo Proceso":
     
     with st.container(border=True):
         st.subheader("3. Partes Intervinientes (Litisconsorcio)")
-        st.caption("Puede seleccionar múltiples personas del directorio o ingresar varias nuevas separadas por un salto de línea.")
-        col_d1, col_d2 = st.columns(2)
+        st.caption("Los puntos o espacios en las cédulas serán eliminados automáticamente para mantener la base de datos estandarizada.")
         
         conn = conectar_bd()
         contactos_df = pd.read_sql_query("SELECT identificacion, nombre, tipo FROM contactos WHERE identificacion IS NOT NULL AND identificacion != ''", conn)
@@ -443,15 +451,41 @@ elif menu == "Nuevo Proceso":
         contrapartes_db = contactos_df[contactos_df['tipo'] == 'Contraparte']
         lista_opciones_d = (contrapartes_db['identificacion'] + " - " + contrapartes_db['nombre']).tolist() if not contrapartes_db.empty else []
         
+        col_d1, col_d2 = st.columns(2)
+        
         with col_d1:
             st.markdown("**Demandantes / Clientes**")
             clientes_existentes = st.multiselect("1. Seleccionar del directorio:", lista_opciones_c, key=f"cli_sel_{fk}")
-            clientes_nuevos_str = st.text_area("2. Registrar nuevos (Opcional)", placeholder="Ejemplo:\n1088123456 - JUAN PEREZ\n901234567 - EMPRESA SAS", help="Ingrese CC/NIT seguido de un guion y el nombre. Uno por línea.", key=f"cli_new_{fk}")
+            
+            st.markdown("**2. Registrar nuevos:**")
+            if st.button("➕ Agregar demandante", key=f"add_dem_{fk}"):
+                st.session_state.num_dem_nuevos += 1
+                st.rerun()
+                
+            nuevos_clientes_data = []
+            for i in range(st.session_state.num_dem_nuevos):
+                with st.container(border=True):
+                    c_id, c_nom = st.columns([1, 1.8])
+                    nid = c_id.text_input("CC/NIT", key=f"n_cli_id_{fk}_{i}", placeholder="Ej: 1088123456")
+                    nom = c_nom.text_input("Nombre completo", key=f"n_cli_nom_{fk}_{i}")
+                    nuevos_clientes_data.append((nid, nom))
                 
         with col_d2:
             st.markdown("**Demandados / Contrapartes**")
             demandados_existentes = st.multiselect("1. Seleccionar del directorio:", lista_opciones_d, key=f"dem_sel_{fk}")
-            demandados_nuevos_str = st.text_area("2. Registrar nuevos (Opcional)", placeholder="Ejemplo:\n1088111111 - MARIA GOMEZ", help="Ingrese CC/NIT seguido de un guion y el nombre. Uno por línea.", key=f"dem_new_{fk}")
+            
+            st.markdown("**2. Registrar nuevos:**")
+            if st.button("➕ Agregar demandado", key=f"add_ddo_{fk}"):
+                st.session_state.num_ddo_nuevos += 1
+                st.rerun()
+                
+            nuevos_demandados_data = []
+            for i in range(st.session_state.num_ddo_nuevos):
+                with st.container(border=True):
+                    c_id, c_nom = st.columns([1, 1.8])
+                    nid = c_id.text_input("CC/NIT", key=f"n_ddo_id_{fk}_{i}", placeholder="Ej: 900123456")
+                    nom = c_nom.text_input("Nombre completo", key=f"n_ddo_nom_{fk}_{i}")
+                    nuevos_demandados_data.append((nid, nom))
                 
     with st.container(border=True):
         st.subheader("4. Pretensiones, Medidas y Asignación")
@@ -483,10 +517,19 @@ elif menu == "Nuevo Proceso":
         medidas_finales = " | ".join(detalles_mc)
     
     if st.button("💾 Guardar Proceso en el Sistema", use_container_width=True):
-        if not (clientes_existentes or clientes_nuevos_str.strip()):
-            st.error("Debe ingresar o seleccionar al menos un Demandante/Cliente.")
-        elif not (demandados_existentes or demandados_nuevos_str.strip()):
-            st.error("Debe ingresar o seleccionar al menos un Demandado/Contraparte.")
+        # Validación de campos obligatorios
+        faltan_datos_nuevos = False
+        for cid, cnom in nuevos_clientes_data:
+            if (cid and not cnom) or (cnom and not cid): faltan_datos_nuevos = True
+        for did, dnom in nuevos_demandados_data:
+            if (did and not dnom) or (dnom and not did): faltan_datos_nuevos = True
+
+        if faltan_datos_nuevos:
+            st.error("⚠️ Para registrar nuevas partes, debe diligenciar tanto la cédula como el nombre de cada uno.")
+        elif not (clientes_existentes or any(c[0] and c[1] for c in nuevos_clientes_data)):
+            st.error("⚠️ Debe ingresar o seleccionar al menos un Demandante/Cliente.")
+        elif not (demandados_existentes or any(d[0] and d[1] for d in nuevos_demandados_data)):
+            st.error("⚠️ Debe ingresar o seleccionar al menos un Demandado/Contraparte.")
         else:
             conn = conectar_bd()
             cursor = conn.cursor()
@@ -496,47 +539,48 @@ elif menu == "Nuevo Proceso":
                 for c in clientes_existentes:
                     i, n = c.split(" - ", 1)
                     ids_dem.append(i); nombres_dem.append(n)
-                if clientes_nuevos_str.strip():
-                    for line in clientes_nuevos_str.split('\n'):
-                        if line.strip():
-                            if '-' in line: i, n = [x.strip() for x in line.split('-', 1)]
-                            else: i, n = f"SIN-CC-{datetime.now().microsecond}", line.strip()
-                            n = n.upper()
-                            ids_dem.append(i); nombres_dem.append(n)
-                            cursor.execute('''INSERT OR IGNORE INTO clientes (identificacion, nombre) VALUES (?, ?)''', (i, n))
-                            cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Cliente', 'PEREIRA')''', (i, n))
+                    
+                for cid, cnom in nuevos_clientes_data:
+                    if cid and cnom:
+                        i = limpiar_identificacion(cid)
+                        n = cnom.strip().upper()
+                        ids_dem.append(i); nombres_dem.append(n)
+                        cursor.execute('''INSERT OR IGNORE INTO clientes (identificacion, nombre) VALUES (?, ?)''', (i, n))
+                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Cliente', 'PEREIRA')''', (i, n))
                 
                 # Procesar Demandados
                 nombres_ddo, ids_ddo = [], []
                 for d in demandados_existentes:
                     i, n = d.split(" - ", 1)
                     ids_ddo.append(i); nombres_ddo.append(n)
-                if demandados_nuevos_str.strip():
-                    for line in demandados_nuevos_str.split('\n'):
-                        if line.strip():
-                            if '-' in line: i, n = [x.strip() for x in line.split('-', 1)]
-                            else: i, n = f"SIN-CC-{datetime.now().microsecond}", line.strip()
-                            n = n.upper()
-                            ids_ddo.append(i); nombres_ddo.append(n)
-                            cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Contraparte', 'PEREIRA')''', (i, n))
+                    
+                for did, dnom in nuevos_demandados_data:
+                    if did and dnom:
+                        i = limpiar_identificacion(did)
+                        n = dnom.strip().upper()
+                        ids_ddo.append(i); nombres_ddo.append(n)
+                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Contraparte', 'PEREIRA')''', (i, n))
                 
                 # Unificar partes con separador
                 id_demandante_final = " | ".join(ids_dem)
-                nombre_demandante_final = " | ".join(nombres_dem)
-                id_demandado_final = " | ".join(ids_ddo)
                 nombre_demandado_final = " | ".join(nombres_ddo)
+                id_demandado_final = " | ".join(ids_ddo)
 
                 cursor.execute('''INSERT INTO procesos (radicado_interno, radicado_rama, naturaleza, juzgado, etapa_actual, id_cliente, demandado, id_demandado, estado, pretensiones, medidas_cautelares, abogado_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (radicado_interno, radicado_rama, naturaleza, juzgado_final, lista_etapas[0], id_demandante_final, nombre_demandado_final, id_demandado_final, "Activo", pretensiones, medidas_finales, abogado_asignado_id))
                 
                 fecha_hoy = str(date.today())
                 cursor.execute('''INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (?, ?, ?, ?, ?)''', (radicado_interno, fecha_hoy, lista_etapas[0], "Radicación: Presentación inicial de la demanda.", usuario_seleccionado))
                 
-                # Alarma inicial condicionada a procesos EJECUTIVOS
                 if "EJECUTIVO" in naturaleza:
                     fecha_alarma = sumar_dias_habiles(fecha_hoy, 30)
                     cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (?, ?, ?)", (radicado_interno, "Radicación", fecha_alarma))
 
                 conn.commit() 
+                
+                # Reiniciar los contadores de botones dinámicos al guardar con éxito
+                st.session_state.num_dem_nuevos = 0
+                st.session_state.num_ddo_nuevos = 0
+                
                 st.session_state.form_key += 1 
                 st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente."
                 st.session_state['toast_icon'] = "📁"
@@ -560,9 +604,6 @@ elif menu == "Expedientes":
     
     if not df_procesos.empty:
         df_procesos = df_procesos.fillna("")
-        
-        # Como ahora tenemos listas concatenadas, priorizamos buscar por nombre de la base de procesos.
-        # Ajustamos 'demandante' para usar el nombre guardado, en lugar del join, por si falló la clave múltiple.
         
         with st.container(border=True):
             st.markdown("### 🔍 Buscador de Expedientes")
@@ -870,7 +911,7 @@ elif menu == "Directorio":
     with c_d1:
         st.subheader("➕ Agregar Contacto")
         with st.form("form_cont", clear_on_submit=True):
-            id_c = st.text_input("Cédula / NIT")
+            id_c = st.text_input("Cédula / NIT", help="Los puntos o comas se eliminarán automáticamente al guardar.")
             n_c = st.text_input("Nombre Completo o Razón Social").upper()
             tipo_c = st.selectbox("Tipo", ["Cliente", "Contraparte", "Juzgado", "Perito", "Otro"])
             t_c = st.text_input("Teléfono")
@@ -879,8 +920,9 @@ elif menu == "Directorio":
             ciu_c = st.text_input("Ciudad", value="PEREIRA").upper()
             if st.form_submit_button("💾 Guardar Contacto"):
                 if n_c:
+                    id_c_limpio = limpiar_identificacion(id_c)
                     conn_c = conectar_bd()
-                    conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (?, ?, ?, ?, ?, ?, ?)", (id_c, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
+                    conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (?, ?, ?, ?, ?, ?, ?)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
                     conn_c.commit()
                     conn_c.close()
                     st.session_state['toast_msg'] = "Contacto guardado."
@@ -919,8 +961,9 @@ elif menu == "Directorio":
                 
                 ce1, ce2 = st.columns(2)
                 if ce1.form_submit_button("💾 Guardar Cambios"):
+                    e_id_c_limpio = limpiar_identificacion(e_id_c)
                     conn_ec = conectar_bd()
-                    conn_ec.cursor().execute("UPDATE contactos SET identificacion=?, nombre=?, tipo=?, telefono=?, email=?, direccion=?, ciudad=? WHERE id=?", (e_id_c, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
+                    conn_ec.cursor().execute("UPDATE contactos SET identificacion=?, nombre=?, tipo=?, telefono=?, email=?, direccion=?, ciudad=? WHERE id=?", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
                     conn_ec.commit()
                     conn_ec.close()
                     st.session_state['toast_msg'] = "Contacto actualizado."
