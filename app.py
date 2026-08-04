@@ -145,7 +145,7 @@ def crear_tablas():
         cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
         
-        # Tabla de Auditoría y Papelera con opción de Restauración
+        # Tabla de Auditoría y Papelera
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS auditoria (
                 id SERIAL PRIMARY KEY,
@@ -187,6 +187,22 @@ def crear_tablas():
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
         
+        # SISTEMA SECUENCIAL BLINDADO
+        cursor.execute("CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor INTEGER)")
+        cursor.execute("SELECT valor FROM configuracion WHERE clave = 'secuencia_exp'")
+        if not cursor.fetchone():
+            cursor.execute("SELECT radicado_interno FROM procesos")
+            act = cursor.fetchall()
+            cursor.execute("SELECT registro_id FROM auditoria WHERE tabla = 'procesos'")
+            borr = cursor.fetchall()
+            max_n = 0
+            for r in act + borr:
+                try:
+                    num = int(r[0].split("-")[1])
+                    if num > max_n: max_n = num
+                except: pass
+            cursor.execute("INSERT INTO configuracion (clave, valor) VALUES ('secuencia_exp', %s)", (max_n,))
+
         conn.commit()
     finally:
         conn.close()
@@ -284,21 +300,20 @@ def obtener_nombre_numero(n):
     nombres = {1: "PRIMERO", 2: "SEGUNDO", 3: "TERCERO", 4: "CUARTO", 5: "QUINTO", 6: "SEXTO", 7: "SÉPTIMO", 8: "OCTAVO", 9: "NOVENO", 10: "DÉCIMO", 11: "ONCE", 12: "DOCE", 13: "TRECE", 14: "CATORCE", 15: "QUINCE", 16: "DIECISÉIS", 17: "DIECISIETE", 18: "DIECIOCHO", 19: "DIECINUEVE", 20: "VEINTE"}
     return nombres.get(n, str(n))
 
-def generar_radicado_interno():
+def previsualizar_siguiente_radicado():
     conn = conectar_bd()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT radicado_interno FROM procesos")
-        radicados = cursor.fetchall()
+        cursor.execute("SELECT valor FROM configuracion WHERE clave = 'secuencia_exp'")
+        actual = cursor.fetchone()[0]
+        return f"EXP-{actual + 1:04d}"
     finally:
         conn.close()
-    max_num = 0
-    for rad in radicados:
-        try:
-            numero = int(rad[0].split("-")[1])
-            if numero > max_num: max_num = numero
-        except: pass
-    return f"EXP-{max_num + 1:04d}"
+
+def consumir_siguiente_radicado(cursor):
+    cursor.execute("UPDATE configuracion SET valor = valor + 1 WHERE clave = 'secuencia_exp' RETURNING valor")
+    nuevo = cursor.fetchone()[0]
+    return f"EXP-{nuevo:04d}"
 
 lista_procesos = [
     "EJECUTIVO SINGULAR", "EJECUTIVO HIPOTECARIO", "EJECUTIVO MIXTO", 
@@ -409,8 +424,8 @@ elif menu == "Nuevo Proceso":
     with st.container(border=True):
         st.subheader("1. Identificación Básica")
         col_id1, col_id2 = st.columns(2)
-        radicado_interno = generar_radicado_interno()
-        col_id1.text_input("Radicado Interno (Automático)", value=radicado_interno, disabled=True, key=f"rad_int_{fk}")
+        radicado_preview = previsualizar_siguiente_radicado()
+        col_id1.text_input("Radicado Interno (Automático)", value=radicado_preview, disabled=True, key=f"rad_int_{fk}")
         naturaleza = col_id2.selectbox("Naturaleza del Proceso", lista_procesos, key=f"nat_{fk}")
     
     with st.container(border=True):
@@ -512,6 +527,10 @@ elif menu == "Nuevo Proceso":
             conn = conectar_bd()
             try:
                 cursor = conn.cursor()
+                
+                # Consumo final del autoincremental
+                radicado_interno_real = consumir_siguiente_radicado(cursor)
+                
                 nombres_dem, ids_dem = [], []
                 for c in clientes_existentes:
                     i, n = c.split(" - ", 1)
@@ -541,25 +560,24 @@ elif menu == "Nuevo Proceso":
                 nombre_demandado_final = " | ".join(nombres_ddo)
                 id_demandado_final = " | ".join(ids_ddo)
 
-                cursor.execute('''INSERT INTO procesos (radicado_interno, radicado_rama, naturaleza, juzgado, etapa_actual, id_cliente, demandado, id_demandado, estado, pretensiones, medidas_cautelares, abogado_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (radicado_interno, radicado_rama, naturaleza, juzgado_final, lista_etapas[0], id_demandante_final, nombre_demandado_final, id_demandado_final, "Activo", pretensiones, medidas_finales, abogado_asignado_id))
+                cursor.execute('''INSERT INTO procesos (radicado_interno, radicado_rama, naturaleza, juzgado, etapa_actual, id_cliente, demandado, id_demandado, estado, pretensiones, medidas_cautelares, abogado_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (radicado_interno_real, radicado_rama, naturaleza, juzgado_final, lista_etapas[0], id_demandante_final, nombre_demandado_final, id_demandado_final, "Activo", pretensiones, medidas_finales, abogado_asignado_id))
                 
                 fecha_hoy = str(date.today())
-                cursor.execute('''INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)''', (radicado_interno, fecha_hoy, lista_etapas[0], "Radicación: Presentación inicial de la demanda.", usuario_seleccionado))
+                cursor.execute('''INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)''', (radicado_interno_real, fecha_hoy, lista_etapas[0], "Radicación: Presentación inicial de la demanda.", usuario_seleccionado))
                 
                 if "EJECUTIVO" in naturaleza:
                     fecha_alarma = sumar_dias_habiles(fecha_hoy, 30)
-                    cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (%s, %s, %s)", (radicado_interno, "Radicación", fecha_alarma))
+                    cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (%s, %s, %s)", (radicado_interno_real, "Radicación", fecha_alarma))
 
-                # Registrar en Auditoría
-                datos_reg = {"radicado_interno": radicado_interno, "naturaleza": naturaleza, "juzgado": juzgado_final, "demandado": nombre_demandado_final}
-                registrar_auditoria(conn, usuario_seleccionado, "CREACION", "procesos", radicado_interno, "", "Creado", json.dumps(datos_reg))
+                datos_reg = {"radicado_interno": radicado_interno_real, "naturaleza": naturaleza, "juzgado": juzgado_final, "demandado": nombre_demandado_final}
+                registrar_auditoria(conn, usuario_seleccionado, "CREACION", "procesos", radicado_interno_real, "", "Creado", json.dumps(datos_reg))
 
                 conn.commit() 
                 st.session_state.num_dem_nuevos = 0
                 st.session_state.num_ddo_nuevos = 0
                 st.session_state.form_key += 1 
                 st.cache_data.clear()
-                st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente en Neon."
+                st.session_state['toast_msg'] = f"Expediente {radicado_interno_real} registrado correctamente en Neon."
                 st.session_state['toast_icon'] = "☁️"
                 st.rerun() 
             except Exception as e:
