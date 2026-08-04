@@ -5,8 +5,9 @@ import unicodedata
 from datetime import datetime, date, timedelta
 import holidays
 import io
+import plotly.express as px
 
-# --- CONFIGURACIÓN DE PÁGINA Y ANIMACIONES CSS ---
+# --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE (CUPERTINO) ---
 st.set_page_config(page_title="Sistema de Gestión Judicial", layout="wide")
 
 st.markdown("""
@@ -14,105 +15,89 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
     .stApp { 
-        background-color: #f8fafc; 
+        background-color: #000000; 
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif;
+        color: #f2f2f7;
         animation: fadeIn 0.4s ease-out;
     }
     
-    /* Animación de entrada suave para toda la página */
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
     }
     
-    /* Animación de pulso para alertas urgentes */
-    @keyframes pulseAlert {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.01); box-shadow: 0 0 12px rgba(220, 38, 38, 0.2); }
-        100% { transform: scale(1); }
-    }
-    
     h1, h2, h3 { 
-        color: #0f172a !important; 
+        color: #f2f2f7 !important; 
         font-weight: 600 !important;
         letter-spacing: -0.025em;
     }
     
     .stTextInput label, .stSelectbox label, .stRadio label, .stDateInput label, .stTextArea label, .stNumberInput label {
         font-weight: 500 !important; 
-        color: #334155 !important; 
+        color: #8e8e93 !important; 
         font-size: 13px !important;
     }
     
-    /* Campos de entrada con animación de enfoque */
+    /* Campos de entrada modo oscuro */
     input[type="text"], textarea, input[type="number"], input[type="password"] {
-        background-color: #ffffff !important; 
-        border: 1px solid #cbd5e1 !important;
+        background-color: #1c1c1e !important; 
+        border: 1px solid #38383a !important;
         border-radius: 10px !important; 
         padding: 10px 14px !important;
-        color: #0f172a !important;
+        color: #f2f2f7 !important;
         transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     input[type="text"]:focus, textarea:focus, input[type="number"]:focus, input[type="password"]:focus {
-        border-color: #2563eb !important;
-        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15) !important;
-        transform: translateY(-1px);
+        border-color: #0a84ff !important;
+        box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.15) !important;
     }
     
-    /* Fichas técnicas animadas */
+    /* Fichas técnicas Glassmorphism Dark */
     .ficha-tecnica {
-        background: rgba(241, 245, 249, 0.9);
+        background: rgba(28, 28, 30, 0.8);
         backdrop-filter: blur(12px);
         padding: 20px; 
         border-radius: 12px;
-        border-left: 4px solid #0f172a; 
+        border-left: 4px solid #0a84ff; 
         margin-bottom: 20px;
         font-size: 14px; 
-        color: #334155;
-        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.02);
-        animation: fadeIn 0.5s ease-out;
+        color: #e5e5ea;
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
     }
     
     /* Badge de usuario */
     .user-badge {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        color: white; 
+        background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%);
+        color: #f2f2f7; 
         padding: 10px 14px;
         border-radius: 10px; 
         font-size: 13px; 
         font-weight: 500;
         display: inline-block; 
         margin-bottom: 15px;
-        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+        border: 1px solid #38383a;
     }
     
-    /* Tarjetas de métricas con efecto hover dinámico */
+    /* Tarjetas de métricas interactivas */
     .metric-card {
-        background: #ffffff; 
-        border: 1px solid rgba(226, 232, 240, 0.9); 
+        background: #1c1c1e; 
+        border: 1px solid #38383a; 
         border-radius: 14px;
         padding: 22px; 
         text-align: center; 
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.04), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        transition: transform 0.25s ease, border-color 0.25s ease;
     }
     
     .metric-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        border-color: #0a84ff;
     }
     
-    /* Alertas con animación de pulso */
-    div.stWarning {
-        animation: pulseAlert 3s infinite ease-in-out;
-        border-radius: 10px !important;
-    }
-    
-    /* Barra lateral */
     div[data-testid="stSidebar"] {
-        background-color: #f1f5f9;
-        border-right: 1px solid #e2e8f0;
+        background-color: #000000;
+        border-right: 1px solid #1c1c1e;
     }
     
     div[data-testid="stSidebar"] div.stRadio label p {
@@ -121,19 +106,28 @@ st.markdown("""
         padding: 8px 12px;
         border-radius: 8px;
         transition: all 0.2s ease;
+        color: #e5e5ea;
     }
     
     div[data-testid="stSidebar"] div.stRadio label p:hover {
-        background-color: rgba(37, 99, 235, 0.08);
-        color: #2563eb;
+        background-color: #1c1c1e;
+        color: #0a84ff;
         transform: translateX(3px);
+    }
+    
+    /* Personalización de los Selectbox en oscuro */
+    div[data-baseweb="select"] > div {
+        background-color: #1c1c1e !important;
+        border-color: #38383a !important;
+        color: #f2f2f7 !important;
+        border-radius: 10px !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("Sistema de Gestión Judicial")
 
-# --- FUNCIONES DE BASE DE DATOS E INTELIGENCIA ---
+# --- FUNCIONES DE BASE DE DATOS ---
 def conectar_bd():
     return sqlite3.connect("firma_abogados.db")
 
@@ -177,21 +171,6 @@ def crear_tablas():
     if 'usuario' not in cols_actuaciones:
         cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
         
-    cursor.execute('''
-        INSERT INTO contactos (identificacion, nombre, tipo, ciudad)
-        SELECT identificacion, nombre, 'Cliente', 'PEREIRA' 
-        FROM clientes 
-        WHERE identificacion NOT IN (SELECT identificacion FROM contactos WHERE identificacion IS NOT NULL)
-    ''')
-    
-    cursor.execute('''
-        INSERT INTO contactos (identificacion, nombre, tipo, ciudad)
-        SELECT id_demandado, demandado, 'Contraparte', 'PEREIRA' 
-        FROM procesos 
-        WHERE demandado IS NOT NULL AND demandado != '' 
-        AND demandado NOT IN (SELECT nombre FROM contactos WHERE nombre IS NOT NULL)
-    ''')
-
     cursor.execute("SELECT COUNT(*) FROM abogados")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (?, ?, ?, ?, ?)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
@@ -200,7 +179,7 @@ def crear_tablas():
 
 crear_tablas()
 
-# --- SISTEMA DE CONTROL DE ACCESO CON CONTRASEÑA ---
+# --- CONTROL DE ACCESO ---
 st.sidebar.title("Control de Acceso")
 conn = conectar_bd()
 abogados_db = pd.read_sql_query("SELECT id, nombre, rol, password FROM abogados", conn)
@@ -241,7 +220,7 @@ else:
     usuario_id = st.session_state.usuario_id
     usuario_rol = st.session_state.usuario_rol
     
-    st.sidebar.markdown(f"<div class='user-badge'>Usuario: <b>{usuario_seleccionado}</b><br>Rol: <b>{usuario_rol}</b></div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div class='user-badge'>👤 {usuario_seleccionado}<br><span style='color:#8e8e93;'>{usuario_rol}</span></div>", unsafe_allow_html=True)
     if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.usuario_nombre = None
@@ -260,7 +239,7 @@ else:
         "👥 Administración"
     ])
 
-# --- FUNCIONES AUXILIARES Y DÍAS HÁBILES ---
+# --- DÍAS HÁBILES Y FUNCIONES ---
 festivos_colombia = holidays.Colombia()
 
 def sumar_dias_habiles(fecha_inicio, dias_a_sumar):
@@ -320,9 +299,12 @@ mapa_subetapas = {
     "8. Desistimiento tácito": {"Impulso o memorial": 30, "Observación": 0}
 }
 
-if 'msg_exito' in st.session_state:
-    st.success(st.session_state['msg_exito'])
-    del st.session_state['msg_exito']
+# --- SISTEMA DE TOASTS (NOTIFICACIONES FLOTANTES) ---
+if 'toast_msg' in st.session_state:
+    st.toast(st.session_state['toast_msg'], icon=st.session_state.get('toast_icon', '✅'))
+    del st.session_state['toast_msg']
+    if 'toast_icon' in st.session_state:
+        del st.session_state['toast_icon']
 
 if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
@@ -337,6 +319,7 @@ if menu == "🏠 Inicio":
     
     conn = conectar_bd()
     total_activos = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Activo'", conn).iloc[0]['c']
+    total_terminados = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Terminado'", conn).iloc[0]['c']
     sum_pretensiones = pd.read_sql_query("SELECT SUM(pretensiones) as s FROM procesos WHERE estado='Activo'", conn).iloc[0]['s']
     sum_pretensiones = sum_pretensiones if pd.notna(sum_pretensiones) else 0.0
     
@@ -350,58 +333,68 @@ if menu == "🏠 Inicio":
     with col_k1:
         st.markdown(f"""
             <div class='metric-card'>
-                <h2 style='color: #0f172a; margin:0;'>📁 {total_activos}</h2>
-                <p style='color: #64748b; margin:5px 0 0 0; font-weight:500;'>Procesos Activos</p>
+                <h2 style='color: #0a84ff; margin:0;'>📁 {total_activos}</h2>
+                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Procesos Activos</p>
             </div>
         """, unsafe_allow_html=True)
     with col_k2:
         st.markdown(f"""
             <div class='metric-card'>
-                <h2 style='color: #dc2626; margin:0;'>🚨 {venc_urgentes_df}</h2>
-                <p style='color: #64748b; margin:5px 0 0 0; font-weight:500;'>Términos Urgentes (Próx. 5 días)</p>
+                <h2 style='color: #ff453a; margin:0;'>🚨 {venc_urgentes_df}</h2>
+                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Términos (Próx. 5 días)</p>
             </div>
         """, unsafe_allow_html=True)
     with col_k3:
         st.markdown(f"""
             <div class='metric-card'>
-                <h2 style='color: #16a34a; margin:0;'>💰 ${sum_pretensiones:,.2f}</h2>
-                <p style='color: #64748b; margin:5px 0 0 0; font-weight:500;'>Valor Total en Gestión</p>
+                <h2 style='color: #30d158; margin:0;'>💰 ${sum_pretensiones:,.2f}</h2>
+                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Capital en Gestión</p>
             </div>
         """, unsafe_allow_html=True)
         
     st.markdown("---")
     
-    st.subheader("Radar de Vencimientos")
-    conn = conectar_bd()
-    radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
-    conn.close()
+    c_grafico, c_radar = st.columns([1, 1.5])
     
-    if not radar_df.empty:
-        for idx, r in radar_df.iterrows():
-            if r['fecha_vencimiento'] < hoy_str:
-                estado_alerta = "🔴 VENCIDO"
-            elif r['fecha_vencimiento'] == hoy_str:
-                estado_alerta = "⚠️ VENCE HOY"
-            else:
-                estado_alerta = "⏰ Próximo a vencer"
-                
-            st.warning(f"**[{estado_alerta}]** | Expediente: **{r['radicado_interno']}** | Tarea: **{r['titulo']}** | Fecha Límite: **{r['fecha_vencimiento']}**")
-    else:
-        st.success("No hay vencimientos críticos pendientes para los próximos 5 días.")
+    with c_grafico:
+        st.subheader("Balance de Expedientes")
+        if total_activos == 0 y total_terminados == 0:
+            st.info("No hay procesos registrados para graficar.")
+        else:
+            # Gráfico de Plotly Premium Dark
+            df_chart = pd.DataFrame({
+                'Estado': ['Activos', 'Terminados'], 
+                'Cantidad': [total_activos, total_terminados]
+            })
+            fig = px.pie(df_chart, names='Estado', values='Cantidad', hole=0.6, 
+                         color_discrete_sequence=['#0a84ff', '#38383a'])
+            fig.update_layout(
+                showlegend=True, 
+                margin=dict(t=20, b=20, l=0, r=0), 
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#f2f2f7")
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with c_radar:
+        st.subheader("Radar de Vencimientos")
+        conn = conectar_bd()
+        radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
+        conn.close()
         
-    st.markdown("---")
-    
-    st.subheader("Actividad Reciente en la Firma")
-    conn = conectar_bd()
-    pulso_df = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY id DESC LIMIT 5", conn)
-    conn.close()
-    
-    if not pulso_df.empty:
-        for idx, r in pulso_df.iterrows():
-            autor_p = f" (Por: {r['usuario']})" if 'usuario' in r and pd.notna(r['usuario']) and r['usuario'] != "" else ""
-            st.info(f"📌 **{r['fecha']}** | Radicado: **{r['radicado_interno']}** | Etapa: **{r['etapa']}**{autor_p}\n\n*{r['descripcion']}*")
-    else:
-        st.info("No hay actuaciones registradas recientemente.")
+        if not radar_df.empty:
+            for idx, r in radar_df.iterrows():
+                if r['fecha_vencimiento'] < hoy_str:
+                    estado_alerta = "🔴 VENCIDO"
+                elif r['fecha_vencimiento'] == hoy_str:
+                    estado_alerta = "⚠️ VENCE HOY"
+                else:
+                    estado_alerta = "⏰ Próximo a vencer"
+                    
+                st.warning(f"**[{estado_alerta}]** | Expediente: **{r['radicado_interno']}** | Tarea: **{r['titulo']}** | Límite: **{r['fecha_vencimiento']}**")
+        else:
+            st.success("✅ Agenda limpia. No hay términos críticos para los próximos 5 días.")
 
 # ==========================================
 # SECCIÓN 1: REGISTRAR PROCESO
@@ -418,7 +411,7 @@ elif menu == "📝 Nuevo Proceso":
     
     with st.container(border=True):
         st.subheader("2. Radicado y Despacho Judicial")
-        en_reparto_check = st.checkbox("📌 El proceso está en REPARTO (Aún sin radicado ni juzgado asignado)", value=True, key=f"rep_{fk}")
+        en_reparto_check = st.checkbox("📌 El proceso está en REPARTO", value=True, key=f"rep_{fk}")
         if not en_reparto_check:
             radicado_rama = st.text_input("Radicado Rama Judicial (23 dígitos)", max_chars=23, key=f"rad_rama_{fk}")
             col_j1, col_j2, col_j3 = st.columns(3)
@@ -449,7 +442,7 @@ elif menu == "📝 Nuevo Proceso":
                     id_demandante = cliente_sel.split(" - ")[0]
                     nombre_demandante = cliente_sel.split(" - ")[1]
                 else: 
-                    st.warning("No hay clientes registrados en el directorio.")
+                    st.warning("No hay clientes registrados.")
             else:
                 id_demandante = st.text_input("CC o NIT del Cliente Nuevo", key=f"id_cli_{fk}")
                 nombre_demandante = st.text_input("Nombre Completo o Razón Social", key=f"nom_cli_{fk}").upper()
@@ -468,7 +461,7 @@ elif menu == "📝 Nuevo Proceso":
                     id_demandado = demandado_sel.split(" - ")[0]
                     demandado = demandado_sel.split(" - ")[1]
                 else: 
-                    st.warning("No hay contrapartes registradas en el directorio.")
+                    st.warning("No hay contrapartes registradas.")
             else:
                 id_demandado = st.text_input("CC o NIT Contraparte Nueva (Opcional)", key=f"id_dem_{fk}")
                 demandado = st.text_input("Nombre Completo de Contraparte", key=f"nom_dem_{fk}").upper()
@@ -530,7 +523,8 @@ elif menu == "📝 Nuevo Proceso":
 
                 conn.commit() 
                 st.session_state.form_key += 1 
-                st.session_state['msg_exito'] = f"Expediente {radicado_interno} registrado correctamente."
+                st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente."
+                st.session_state['toast_icon'] = "📁"
                 st.rerun() 
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
@@ -585,10 +579,10 @@ elif menu == "📂 Expedientes":
                 with st.container(border=True):
                     st.markdown(f"""
                         <div style='text-align: center; margin-bottom: 25px;'>
-                            <h2 style='color: #0f172a; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>
-                                {proceso_fila['demandante']} <span style='color: #64748b; font-size: 18px;'>VS</span> {proceso_fila['demandado']}
+                            <h2 style='color: #f2f2f7; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>
+                                {proceso_fila['demandante']} <span style='color: #8e8e93; font-size: 18px;'>VS</span> {proceso_fila['demandado']}
                             </h2>
-                            <div style='color: #64748b; font-size: 13px; margin-top: -5px;'>
+                            <div style='color: #8e8e93; font-size: 13px; margin-top: -5px;'>
                                 <span style='display: inline-block; width: 45%; text-align: right; padding-right: 25px;'>CC/NIT: {id_dem}</span>
                                 <span style='display: inline-block; width: 45%; text-align: left; padding-left: 25px;'>CC/NIT: {id_ddo}</span>
                             </div>
@@ -628,7 +622,7 @@ elif menu == "📂 Expedientes":
                             n_abg_id = abogados_df[abogados_df['nombre'] == n_abg_nombre]['id'].values[0]
                             n_med = c_e7.text_input("Medidas Cautelares", value=proceso_fila['medidas_cautelares'])
 
-                            if st.form_submit_button("💾 Guardar Cambios del Expediente"):
+                            if st.form_submit_button("💾 Guardar Cambios"):
                                 if actualizar_juz: juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}"
                                 else: juz_guardar = proceso_fila['juzgado']
                                 rad_guardar = n_rad if n_rad else "EN REPARTO"
@@ -637,7 +631,8 @@ elif menu == "📂 Expedientes":
                                 conn_up.cursor().execute("""UPDATE procesos SET naturaleza=?, demandado=?, radicado_rama=?, juzgado=?, pretensiones=?, medidas_cautelares=?, abogado_id=?, estado=? WHERE radicado_interno=?""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
                                 conn_up.commit()
                                 conn_up.close()
-                                st.session_state['msg_exito'] = "Expediente actualizado."
+                                st.session_state['toast_msg'] = "Expediente actualizado exitosamente."
+                                st.session_state['toast_icon'] = "✅"
                                 st.rerun()
 
                     with st.expander("🚨 Zona de Riesgo: Eliminar Expediente"):
@@ -650,7 +645,8 @@ elif menu == "📂 Expedientes":
                             conn_del.cursor().execute("DELETE FROM gastos WHERE radicado_interno=?", (radicado_seleccionado,))
                             conn_del.commit()
                             conn_del.close()
-                            st.session_state['msg_exito'] = f"Expediente {radicado_seleccionado} eliminado."
+                            st.session_state['toast_msg'] = f"Expediente {radicado_seleccionado} eliminado."
+                            st.session_state['toast_icon'] = "🗑️"
                             st.rerun()
 
                     st.markdown("---")
@@ -689,7 +685,8 @@ elif menu == "📂 Expedientes":
                             
                             conn_ins.commit()
                             conn_ins.close()
-                            st.session_state['msg_exito'] = "Actuación registrada con éxito."
+                            st.session_state['toast_msg'] = "Actuación registrada con éxito."
+                            st.session_state['toast_icon'] = "📝"
                             st.rerun()
 
                     with col_a2:
@@ -733,7 +730,8 @@ elif menu == "📂 Expedientes":
                                     conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (?, ?, ?, ?)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
                                     conn_g.commit()
                                     conn_g.close()
-                                    st.session_state['msg_exito'] = "Gasto registrado."
+                                    st.session_state['toast_msg'] = "Gasto registrado."
+                                    st.session_state['toast_icon'] = "💸"
                                     st.rerun()
                                 else:
                                     st.error("Ingrese concepto y valor válidos.")
@@ -797,7 +795,8 @@ elif menu == "⏰ Vencimientos":
                     conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (?, ?, ?, ?)", (rad_sel, tit_venc, str(f_venc), obs_venc))
                     conn_v.commit()
                     conn_v.close()
-                    st.session_state['msg_exito'] = "Término agendado con éxito."
+                    st.session_state['toast_msg'] = "Término agendado con éxito."
+                    st.session_state['toast_icon'] = "⏰"
                     st.rerun()
                     
     with c_ag2:
@@ -830,7 +829,7 @@ elif menu == "⏰ Vencimientos":
                             conn_dv.close()
                             st.rerun()
         else:
-            st.success("Agenda limpia. No hay alarmas pendientes.")
+            st.success("✅ Agenda limpia. No hay alarmas pendientes.")
 
         with st.expander("👁️ Historial de Tareas Completadas"):
             venc_completados = venc_df[venc_df['estado'] == 'Completado']
@@ -860,7 +859,8 @@ elif menu == "📞 Directorio":
                     conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (?, ?, ?, ?, ?, ?, ?)", (id_c, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
                     conn_c.commit()
                     conn_c.close()
-                    st.session_state['msg_exito'] = "Contacto guardado."
+                    st.session_state['toast_msg'] = "Contacto guardado."
+                    st.session_state['toast_icon'] = "📞"
                     st.rerun()
     
     with c_d2:
@@ -899,6 +899,8 @@ elif menu == "📞 Directorio":
                     conn_ec.cursor().execute("UPDATE contactos SET identificacion=?, nombre=?, tipo=?, telefono=?, email=?, direccion=?, ciudad=? WHERE id=?", (e_id_c, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
                     conn_ec.commit()
                     conn_ec.close()
+                    st.session_state['toast_msg'] = "Contacto actualizado."
+                    st.session_state['toast_icon'] = "✅"
                     st.rerun()
                 if ce2.form_submit_button("🗑️ Eliminar"):
                     conn_dc = conectar_bd()
@@ -920,8 +922,8 @@ elif menu == "📊 Resumen e Informes":
     conn.close()
     st.markdown(f"""
         <div class='metric-card' style='max-width: 300px; margin-bottom: 25px;'>
-            <h2 style='color: #0f172a; margin:0;'>📁 {total_p}</h2>
-            <p style='color: #64748b; margin:5px 0 0 0; font-weight:500;'>Procesos Totales Registrados</p>
+            <h2 style='color: #0a84ff; margin:0;'>📁 {total_p}</h2>
+            <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Procesos Totales Registrados</p>
         </div>
     """, unsafe_allow_html=True)
     
@@ -987,7 +989,8 @@ elif menu == "👥 Administración":
                         conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (?, ?, ?, ?, ?)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
                         conn_m.commit()
                         conn_m.close()
-                        st.session_state['msg_exito'] = "Perfil creado con éxito."
+                        st.session_state['toast_msg'] = "Perfil creado con éxito."
+                        st.session_state['toast_icon'] = "👥"
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("Ya existe un usuario registrado con ese nombre.")
@@ -1014,7 +1017,8 @@ elif menu == "👥 Administración":
                             conn_ea.cursor().execute("UPDATE abogados SET nombre=?, email=?, telefono=?, rol=? WHERE id=?", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
                         conn_ea.commit()
                         conn_ea.close()
-                        st.session_state['msg_exito'] = "Modificaciones guardadas."
+                        st.session_state['toast_msg'] = "Modificaciones de seguridad guardadas."
+                        st.session_state['toast_icon'] = "🔐"
                         st.rerun()
                     if c_b2.form_submit_button("🗑️ Eliminar Perfil"):
                         if abg_editar == "ADMINISTRADOR MAESTRO":
@@ -1024,7 +1028,8 @@ elif menu == "👥 Administración":
                             conn_da.cursor().execute("DELETE FROM abogados WHERE id=?", (int(datos_a['id']),))
                             conn_da.commit()
                             conn_da.close()
-                            st.session_state['msg_exito'] = "Perfil eliminado."
+                            st.session_state['toast_msg'] = "Perfil eliminado."
+                            st.session_state['toast_icon'] = "🗑️"
                             st.rerun()
             st.dataframe(df_abg, use_container_width=True)
     else:
