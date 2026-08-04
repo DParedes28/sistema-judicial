@@ -67,21 +67,9 @@ st.markdown("""
 
 st.title("Sistema de Gestión Judicial")
 
-# --- CONEXIÓN A POSTGRESQL (NEON) CON DOBLE CACHÉ ---
-@st.cache_resource(ttl="4h")
-def init_connection():
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
-
+# --- CONEXIÓN A POSTGRESQL (NEON POOLED) ---
 def conectar_bd():
-    try:
-        conn = init_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        return conn
-    except Exception:
-        st.cache_resource.clear()
-        st.cache_data.clear()
-        return init_connection()
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 @st.cache_data(ttl=60)
 def cargar_abogados():
@@ -104,7 +92,6 @@ def cargar_contactos_general():
     df = pd.read_sql_query("SELECT * FROM contactos", conn)
     conn.close()
     return df
-
 def limpiar_identificacion(texto):
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
