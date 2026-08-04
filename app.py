@@ -97,6 +97,26 @@ def limpiar_identificacion(texto):
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
 
+def obtener_nombres_demandantes(id_cliente_str, conn):
+    if not id_cliente_str: return "DEMANDANTE"
+    ids = [i.strip() for i in str(id_cliente_str).split("|")]
+    nombres = []
+    cursor = conn.cursor()
+    for i in ids:
+        try:
+            cursor.execute("SELECT nombre FROM clientes WHERE identificacion = %s", (i,))
+            res = cursor.fetchone()
+            if res:
+                nombres.append(res[0])
+            else:
+                cursor.execute("SELECT nombre FROM contactos WHERE identificacion = %s", (i,))
+                res2 = cursor.fetchone()
+                if res2: nombres.append(res2[0])
+                else: nombres.append(i)
+        except:
+            nombres.append(i)
+    return " / ".join(nombres) if nombres else "DEMANDANTE"
+
 def crear_tablas():
     conn = conectar_bd()
     cursor = conn.cursor()
@@ -353,7 +373,7 @@ if menu == "Inicio":
 # SECCIÓN 1: REGISTRAR PROCESO
 # ==========================================
 elif menu == "Nuevo Proceso":
-    st.header("Registro de Nuevo Proceso (Soporta Litisconsorcio)")
+    st.header("Registro de Nuevo Proceso")
     
     with st.container(border=True):
         st.subheader("1. Identificación Básica")
@@ -378,7 +398,7 @@ elif menu == "Nuevo Proceso":
             juzgado_final = "PENDIENTE POR REPARTO"
     
     with st.container(border=True):
-        st.subheader("3. Partes Intervinientes (Litisconsorcio)")
+        st.subheader("3. Partes Intervinientes")
         st.caption("Los puntos o espacios en las cédulas serán eliminados automáticamente para mantener la base de datos estandarizada.")
         
         contactos_df = cargar_contactos_general()
@@ -551,11 +571,15 @@ elif menu == "Expedientes":
                 try: val_pret_ficha = float(proceso_fila['pretensiones']) if proceso_fila['pretensiones'] else 0.0
                 except: val_pret_ficha = 0.0
                 
+                conn_n = conectar_bd()
+                nombre_demandante_str = obtener_nombres_demandantes(proceso_fila['id_cliente'], conn_n)
+                conn_n.close()
+                
                 st.markdown("---")
                 with st.container(border=True):
                     st.markdown(f"""
                         <div style='text-align: center; margin-bottom: 25px;'>
-                            <h2 style='color: #f2f2f7; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>ACCIÓN CONTRA: {proceso_fila['demandado']}</h2>
+                            <h2 style='color: #f2f2f7; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>{nombre_demandante_str} VS {proceso_fila['demandado']}</h2>
                             <div style='color: #8e8e93; font-size: 13px; margin-top: -5px;'>
                                 <span style='display: inline-block; width: 45%; text-align: right; padding-right: 25px;'>Identificación Demandante(s): {id_dem}</span>
                                 <span style='display: inline-block; width: 45%; text-align: left; padding-left: 25px;'>Identificación Demandado(s): {id_ddo}</span>
