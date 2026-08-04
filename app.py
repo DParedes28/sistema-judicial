@@ -100,30 +100,46 @@ st.markdown("""
         border-right: 1px solid #1c1c1e;
     }
     
-/* --- SUPER MENÚ LATERAL (ESTILO TARJETAS) --- */
-    div[data-testid="stSidebar"] div[role="radiogroup"] > label {
-        padding: 15px 18px !important;
-        margin-bottom: 12px !important;
+/* --- SUPER MENÚ LATERAL DEFINITIVO --- */
+    
+    /* 1. Ocultar los círculos rojos nativos a la fuerza */
+    div[data-testid="stSidebar"] div[role="radiogroup"] label div[data-baseweb="radio"] > div:first-child,
+    div[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+        display: none !important;
+    }
+
+    /* 2. Convertir las opciones en botones amplios */
+    div[data-testid="stSidebar"] div[role="radiogroup"] label {
         background-color: #1c1c1e !important;
         border: 1px solid #2c2c2e !important;
+        padding: 14px 20px !important;
         border-radius: 12px !important;
+        margin-bottom: 12px !important;
         width: 100% !important;
-        transition: all 0.2s ease-in-out !important;
         cursor: pointer !important;
+        transition: all 0.25s ease !important;
     }
 
-    div[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+    /* 3. Efecto al pasar el cursor (Hover) */
+    div[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
         background-color: #2c2c2e !important;
-        border-color: #0a84ff !important;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        border-color: #8e8e93 !important;
+        transform: translateY(-2px) !important;
     }
 
-    div[data-testid="stSidebar"] div[role="radiogroup"] p {
-        font-size: 18px !important;
+    /* 4. Efecto de "Botón Presionado/Activo" en color Azul */
+    div[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+        background-color: #0a84ff !important;
+        border-color: #005ecb !important;
+        box-shadow: 0 4px 15px rgba(10, 132, 255, 0.3) !important;
+    }
+
+    /* 5. Ajuste del texto interno */
+    div[data-testid="stSidebar"] div[role="radiogroup"] label p {
+        font-size: 16px !important;
         font-weight: 600 !important;
-        color: #f2f2f7 !important;
-        margin-left: 5px !important;
+        color: #ffffff !important;
+        margin: 0 !important;
     }
     </style>
 """, unsafe_allow_html=True)
