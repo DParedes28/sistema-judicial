@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import pandas as pd
 import unicodedata
 from datetime import datetime, date, timedelta
@@ -7,8 +7,12 @@ import holidays
 import io
 import plotly.express as px
 from streamlit_option_menu import option_menu
+import warnings
 
-# --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE (CUPERTINO) ---
+# Ocultar advertencias de Pandas sobre conexiones directas a DB
+warnings.filterwarnings('ignore')
+
+# --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE ---
 st.set_page_config(page_title="Sistema de Gestión Judicial", layout="wide")
 
 st.markdown("""
@@ -27,95 +31,55 @@ st.markdown("""
         to { opacity: 1; transform: translateY(0); }
     }
     
-    h1, h2, h3 { 
-        color: #f2f2f7 !important; 
-        font-weight: 600 !important;
-        letter-spacing: -0.025em;
-    }
+    h1, h2, h3 { color: #f2f2f7 !important; font-weight: 600 !important; letter-spacing: -0.025em; }
     
     .stTextInput label, .stSelectbox label, .stRadio label, .stDateInput label, .stTextArea label, .stNumberInput label, .stMultiSelect label {
-        font-weight: 500 !important; 
-        color: #8e8e93 !important; 
-        font-size: 13px !important;
+        font-weight: 500 !important; color: #8e8e93 !important; font-size: 13px !important;
     }
     
     input[type="text"], textarea, input[type="number"], input[type="password"] {
-        background-color: #1c1c1e !important; 
-        border: 1px solid #38383a !important;
-        border-radius: 10px !important; 
-        padding: 10px 14px !important;
-        color: #f2f2f7 !important;
-        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        background-color: #1c1c1e !important; border: 1px solid #38383a !important; border-radius: 10px !important; 
+        padding: 10px 14px !important; color: #f2f2f7 !important; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
     }
     
     input[type="text"]:focus, textarea:focus, input[type="number"]:focus, input[type="password"]:focus {
-        border-color: #0a84ff !important;
-        box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.15) !important;
+        border-color: #0a84ff !important; box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.15) !important;
     }
     
     .ficha-tecnica {
-        background: rgba(28, 28, 30, 0.8);
-        backdrop-filter: blur(12px);
-        padding: 20px; 
-        border-radius: 12px;
-        border-left: 4px solid #0a84ff; 
-        margin-bottom: 20px;
-        font-size: 14px; 
-        color: #e5e5ea;
-        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+        background: rgba(28, 28, 30, 0.8); backdrop-filter: blur(12px); padding: 20px; border-radius: 12px;
+        border-left: 4px solid #0a84ff; margin-bottom: 20px; font-size: 14px; color: #e5e5ea; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
     }
     
     .user-badge {
-        background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%);
-        color: #f2f2f7; 
-        padding: 10px 14px;
-        border-radius: 10px; 
-        font-size: 13px; 
-        font-weight: 500;
-        display: inline-block; 
-        margin-bottom: 15px;
-        border: 1px solid #38383a;
-        width: 100%;
-        text-align: center;
+        background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%); color: #f2f2f7; padding: 10px 14px;
+        border-radius: 10px; font-size: 13px; font-weight: 500; display: inline-block; margin-bottom: 15px;
+        border: 1px solid #38383a; width: 100%; text-align: center;
     }
     
     .metric-card {
-        background: #1c1c1e; 
-        border: 1px solid #38383a; 
-        border-radius: 14px;
-        padding: 22px; 
-        text-align: center; 
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-        transition: transform 0.25s ease, border-color 0.25s ease;
+        background: #1c1c1e; border: 1px solid #38383a; border-radius: 14px; padding: 22px; text-align: center; 
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); transition: transform 0.25s ease, border-color 0.25s ease;
     }
     
-    .metric-card:hover {
-        transform: translateY(-4px);
-        border-color: #0a84ff;
-    }
+    .metric-card:hover { transform: translateY(-4px); border-color: #0a84ff; }
     
-    div[data-testid="stSidebar"] {
-        background-color: #000000;
-        border-right: 1px solid #1c1c1e;
-    }
+    div[data-testid="stSidebar"] { background-color: #000000; border-right: 1px solid #1c1c1e; }
     
     div[data-baseweb="select"] > div {
-        background-color: #1c1c1e !important;
-        border-color: #38383a !important;
-        color: #f2f2f7 !important;
-        border-radius: 10px !important;
+        background-color: #1c1c1e !important; border-color: #38383a !important; color: #f2f2f7 !important; border-radius: 10px !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("Sistema de Gestión Judicial")
 
-# --- FUNCIONES DE BASE DE DATOS Y LIMPIEZA ---
+# --- CONEXIÓN A POSTGRESQL (NEON) ---
 def conectar_bd():
-    return sqlite3.connect("firma_abogados.db")
+    # Toma la llave secreta que guardamos en Streamlit
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 def limpiar_identificacion(texto):
-    """Elimina puntos, comas y espacios en blanco de las CC o NIT"""
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
 
@@ -123,48 +87,52 @@ def crear_tablas():
     conn = conectar_bd()
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (identificacion TEXT PRIMARY KEY, nombre TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS abogados (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE, email TEXT, telefono TEXT, rol TEXT DEFAULT 'Abogado', password TEXT DEFAULT '1234')''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS abogados (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, email TEXT, telefono TEXT, rol TEXT DEFAULT 'Abogado', password TEXT DEFAULT '1234')''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS procesos (
             radicado_interno TEXT PRIMARY KEY, radicado_rama TEXT, naturaleza TEXT,
-            juzgado TEXT, etapa_actual TEXT, id_cliente TEXT, demandado TEXT, id_demandado TEXT, estado TEXT,
-            pretensiones REAL, medidas_cautelares TEXT, abogado_id INTEGER
+            juzgado TEXT, etapa_actual TEXT, id_cliente TEXT, demandado TEXT, id_demandado TEXT, estado TEXT DEFAULT 'Activo',
+            pretensiones NUMERIC, medidas_cautelares TEXT, abogado_id INTEGER
         )
     ''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS actuaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, radicado_interno TEXT, fecha TEXT, etapa TEXT, descripcion TEXT, usuario TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS vencimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, radicado_interno TEXT, titulo TEXT, fecha_vencimiento TEXT, estado TEXT DEFAULT 'Pendiente', observaciones TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor REAL)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS actuaciones (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, etapa TEXT, descripcion TEXT, usuario TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS vencimientos (id SERIAL PRIMARY KEY, radicado_interno TEXT, titulo TEXT, fecha_vencimiento TEXT, estado TEXT DEFAULT 'Pendiente', observaciones TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
     
-    cursor.execute("PRAGMA table_info(procesos)")
-    cols_procesos = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'procesos'")
+    cols_procesos = [col[0] for col in cursor.fetchall()]
     if 'abogado_id' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN abogado_id INTEGER")
-    if 'pretensiones' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN pretensiones REAL")
+    if 'pretensiones' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN pretensiones NUMERIC")
     if 'medidas_cautelares' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN medidas_cautelares TEXT")
     if 'estado' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN estado TEXT DEFAULT 'Activo'")
 
-    cursor.execute("PRAGMA table_info(contactos)")
-    cols_contactos = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contactos'")
+    cols_contactos = [col[0] for col in cursor.fetchall()]
     if 'identificacion' not in cols_contactos: 
         cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
 
-    cursor.execute("PRAGMA table_info(abogados)")
-    cols_abogados = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
+    cols_abogados = [col[0] for col in cursor.fetchall()]
     if 'password' not in cols_abogados:
         cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
 
-    cursor.execute("PRAGMA table_info(actuaciones)")
-    cols_actuaciones = [col[1] for col in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
+    cols_actuaciones = [col[0] for col in cursor.fetchall()]
     if 'usuario' not in cols_actuaciones:
         cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
         
     cursor.execute("SELECT COUNT(*) FROM abogados")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (?, ?, ?, ?, ?)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
+        cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
+    
     conn.commit()
     conn.close()
 
-crear_tablas()
+try:
+    crear_tablas()
+except Exception as e:
+    st.error(f"Error conectando a la base de datos Neon: {e}")
 
 # --- CONTROL DE ACCESO ---
 st.sidebar.title("Control de Acceso")
@@ -227,19 +195,10 @@ else:
                 "container": {"padding": "0!important", "background-color": "transparent"},
                 "icon": {"color": "#8e8e93", "font-size": "18px"},
                 "nav-link": {
-                    "font-size": "15px", 
-                    "text-align": "left", 
-                    "margin":"4px 0px", 
-                    "padding": "12px",
-                    "color": "#f2f2f7", 
-                    "border-radius": "10px",
-                    "font-weight": "600"
+                    "font-size": "15px", "text-align": "left", "margin":"4px 0px", 
+                    "padding": "12px", "color": "#f2f2f7", "border-radius": "10px", "font-weight": "600"
                 },
-                "nav-link-selected": {
-                    "background-color": "#1c1c1e", 
-                    "color": "#0a84ff", 
-                    "border": "1px solid #38383a"
-                },
+                "nav-link-selected": { "background-color": "#1c1c1e", "color": "#0a84ff", "border": "1px solid #38383a" },
             }
         )
 
@@ -312,18 +271,13 @@ mapa_subetapas = {
 if 'toast_msg' in st.session_state:
     st.toast(st.session_state['toast_msg'], icon=st.session_state.get('toast_icon', '✅'))
     del st.session_state['toast_msg']
-    if 'toast_icon' in st.session_state:
-        del st.session_state['toast_icon']
+    if 'toast_icon' in st.session_state: del st.session_state['toast_icon']
 
-if 'form_key' not in st.session_state:
-    st.session_state.form_key = 0
+if 'form_key' not in st.session_state: st.session_state.form_key = 0
 fk = st.session_state.form_key 
 
-# Variables dinámicas para litisconsorcios
-if 'num_dem_nuevos' not in st.session_state:
-    st.session_state.num_dem_nuevos = 0
-if 'num_ddo_nuevos' not in st.session_state:
-    st.session_state.num_ddo_nuevos = 0
+if 'num_dem_nuevos' not in st.session_state: st.session_state.num_dem_nuevos = 0
+if 'num_ddo_nuevos' not in st.session_state: st.session_state.num_ddo_nuevos = 0
 
 # ==========================================
 # SECCIÓN 0: INICIO (DASHBOARD GERENCIAL)
@@ -346,26 +300,11 @@ if menu == "Inicio":
     
     col_k1, col_k2, col_k3 = st.columns(3)
     with col_k1:
-        st.markdown(f"""
-            <div class='metric-card'>
-                <h2 style='color: #0a84ff; margin:0; font-size: 32px;'>📁 {total_activos}</h2>
-                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Procesos Activos</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><h2 style='color:#0a84ff;margin:0;font-size:32px;'>📁 {total_activos}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos Activos</p></div>", unsafe_allow_html=True)
     with col_k2:
-        st.markdown(f"""
-            <div class='metric-card'>
-                <h2 style='color: #ff453a; margin:0; font-size: 32px;'>🚨 {venc_urgentes_df}</h2>
-                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Términos (Próx. 5 días)</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><h2 style='color:#ff453a;margin:0;font-size:32px;'>🚨 {venc_urgentes_df}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Términos (Próx. 5 días)</p></div>", unsafe_allow_html=True)
     with col_k3:
-        st.markdown(f"""
-            <div class='metric-card'>
-                <h2 style='color: #30d158; margin:0; font-size: 26px;'>💰 ${sum_pretensiones:,.0f}</h2>
-                <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Capital Ejecutivo Activo</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><h2 style='color:#30d158;margin:0;font-size:26px;'>💰 ${sum_pretensiones:,.0f}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Capital Ejecutivo Activo</p></div>", unsafe_allow_html=True)
         
     st.markdown("---")
     c_grafico, c_radar = st.columns([1, 1.5])
@@ -375,19 +314,9 @@ if menu == "Inicio":
         if total_activos == 0 and total_terminados == 0:
             st.info("No hay procesos registrados para graficar.")
         else:
-            df_chart = pd.DataFrame({
-                'Estado': ['Activos', 'Terminados'], 
-                'Cantidad': [total_activos, total_terminados]
-            })
-            fig = px.pie(df_chart, names='Estado', values='Cantidad', hole=0.6, 
-                         color_discrete_sequence=['#0a84ff', '#38383a'])
-            fig.update_layout(
-                showlegend=True, 
-                margin=dict(t=20, b=20, l=0, r=0), 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="#f2f2f7")
-            )
+            df_chart = pd.DataFrame({'Estado': ['Activos', 'Terminados'], 'Cantidad': [total_activos, total_terminados]})
+            fig = px.pie(df_chart, names='Estado', values='Cantidad', hole=0.6, color_discrete_sequence=['#0a84ff', '#38383a'])
+            fig.update_layout(showlegend=True, margin=dict(t=20, b=20, l=0, r=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#f2f2f7"))
             st.plotly_chart(fig, use_container_width=True)
 
     with c_radar:
@@ -398,13 +327,7 @@ if menu == "Inicio":
         
         if not radar_df.empty:
             for idx, r in radar_df.iterrows():
-                if r['fecha_vencimiento'] < hoy_str:
-                    estado_alerta = "🔴 VENCIDO"
-                elif r['fecha_vencimiento'] == hoy_str:
-                    estado_alerta = "⚠️ VENCE HOY"
-                else:
-                    estado_alerta = "⏰ Próximo a vencer"
-                    
+                estado_alerta = "🔴 VENCIDO" if r['fecha_vencimiento'] < hoy_str else "⚠️ VENCE HOY" if r['fecha_vencimiento'] == hoy_str else "⏰ Próximo a vencer"
                 st.warning(f"**[{estado_alerta}]** | Expediente: **{r['radicado_interno']}** | Tarea: **{r['titulo']}** | Límite: **{r['fecha_vencimiento']}**")
         else:
             st.success("✅ Agenda limpia. No hay términos críticos para los próximos 5 días.")
@@ -510,19 +433,11 @@ elif menu == "Nuevo Proceso":
                     detalles_mc.append(mc)
                 else:
                     detalle = st.text_input(f"Detalle de la medida ({mc}):", placeholder="Placa, matrícula, etc.", key=f"mcdet_{fk}_{i}")
-                    if detalle:
-                        detalles_mc.append(f"{mc} ({detalle})")
-                    else:
-                        detalles_mc.append(mc) 
+                    detalles_mc.append(f"{mc} ({detalle})" if detalle else mc)
         medidas_finales = " | ".join(detalles_mc)
     
     if st.button("💾 Guardar Proceso en el Sistema", use_container_width=True):
-        # Validación de campos obligatorios
-        faltan_datos_nuevos = False
-        for cid, cnom in nuevos_clientes_data:
-            if (cid and not cnom) or (cnom and not cid): faltan_datos_nuevos = True
-        for did, dnom in nuevos_demandados_data:
-            if (did and not dnom) or (dnom and not did): faltan_datos_nuevos = True
+        faltan_datos_nuevos = any((c[0] and not c[1]) or (c[1] and not c[0]) for c in nuevos_clientes_data) or any((d[0] and not d[1]) or (d[1] and not d[0]) for d in nuevos_demandados_data)
 
         if faltan_datos_nuevos:
             st.error("⚠️ Para registrar nuevas partes, debe diligenciar tanto la cédula como el nombre de cada uno.")
@@ -534,7 +449,6 @@ elif menu == "Nuevo Proceso":
             conn = conectar_bd()
             cursor = conn.cursor()
             try:
-                # Procesar Demandantes
                 nombres_dem, ids_dem = [], []
                 for c in clientes_existentes:
                     i, n = c.split(" - ", 1)
@@ -545,10 +459,9 @@ elif menu == "Nuevo Proceso":
                         i = limpiar_identificacion(cid)
                         n = cnom.strip().upper()
                         ids_dem.append(i); nombres_dem.append(n)
-                        cursor.execute('''INSERT OR IGNORE INTO clientes (identificacion, nombre) VALUES (?, ?)''', (i, n))
-                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Cliente', 'PEREIRA')''', (i, n))
+                        cursor.execute('''INSERT INTO clientes (identificacion, nombre) VALUES (%s, %s) ON CONFLICT (identificacion) DO NOTHING''', (i, n))
+                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (%s, %s, 'Cliente', 'PEREIRA')''', (i, n))
                 
-                # Procesar Demandados
                 nombres_ddo, ids_ddo = [], []
                 for d in demandados_existentes:
                     i, n = d.split(" - ", 1)
@@ -559,31 +472,27 @@ elif menu == "Nuevo Proceso":
                         i = limpiar_identificacion(did)
                         n = dnom.strip().upper()
                         ids_ddo.append(i); nombres_ddo.append(n)
-                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (?, ?, 'Contraparte', 'PEREIRA')''', (i, n))
+                        cursor.execute('''INSERT INTO contactos (identificacion, nombre, tipo, ciudad) VALUES (%s, %s, 'Contraparte', 'PEREIRA')''', (i, n))
                 
-                # Unificar partes con separador
                 id_demandante_final = " | ".join(ids_dem)
                 nombre_demandado_final = " | ".join(nombres_ddo)
                 id_demandado_final = " | ".join(ids_ddo)
 
-                cursor.execute('''INSERT INTO procesos (radicado_interno, radicado_rama, naturaleza, juzgado, etapa_actual, id_cliente, demandado, id_demandado, estado, pretensiones, medidas_cautelares, abogado_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', (radicado_interno, radicado_rama, naturaleza, juzgado_final, lista_etapas[0], id_demandante_final, nombre_demandado_final, id_demandado_final, "Activo", pretensiones, medidas_finales, abogado_asignado_id))
+                cursor.execute('''INSERT INTO procesos (radicado_interno, radicado_rama, naturaleza, juzgado, etapa_actual, id_cliente, demandado, id_demandado, estado, pretensiones, medidas_cautelares, abogado_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''', (radicado_interno, radicado_rama, naturaleza, juzgado_final, lista_etapas[0], id_demandante_final, nombre_demandado_final, id_demandado_final, "Activo", pretensiones, medidas_finales, abogado_asignado_id))
                 
                 fecha_hoy = str(date.today())
-                cursor.execute('''INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (?, ?, ?, ?, ?)''', (radicado_interno, fecha_hoy, lista_etapas[0], "Radicación: Presentación inicial de la demanda.", usuario_seleccionado))
+                cursor.execute('''INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)''', (radicado_interno, fecha_hoy, lista_etapas[0], "Radicación: Presentación inicial de la demanda.", usuario_seleccionado))
                 
                 if "EJECUTIVO" in naturaleza:
                     fecha_alarma = sumar_dias_habiles(fecha_hoy, 30)
-                    cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (?, ?, ?)", (radicado_interno, "Radicación", fecha_alarma))
+                    cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (%s, %s, %s)", (radicado_interno, "Radicación", fecha_alarma))
 
                 conn.commit() 
-                
-                # Reiniciar los contadores de botones dinámicos al guardar con éxito
                 st.session_state.num_dem_nuevos = 0
                 st.session_state.num_ddo_nuevos = 0
-                
                 st.session_state.form_key += 1 
-                st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente."
-                st.session_state['toast_icon'] = "📁"
+                st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente en Neon."
+                st.session_state['toast_icon'] = "☁️"
                 st.rerun() 
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
@@ -606,7 +515,6 @@ elif menu == "Expedientes":
         df_procesos = df_procesos.fillna("")
         
         with st.container(border=True):
-            st.markdown("### 🔍 Buscador de Expedientes")
             busqueda = st.text_input("Filtrar por radicado, partes intervinientes o despacho:", placeholder="Ej: EXP-0001, Empresa SAS...", label_visibility="collapsed").strip()
         
         if busqueda:
@@ -635,25 +543,19 @@ elif menu == "Expedientes":
                 except: val_pret_ficha = 0.0
                 
                 st.markdown("---")
-                
                 with st.container(border=True):
                     st.markdown(f"""
                         <div style='text-align: center; margin-bottom: 25px;'>
-                            <h2 style='color: #f2f2f7; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>
-                                ACCIÓN CONTRA: {proceso_fila['demandado']}
-                            </h2>
+                            <h2 style='color: #f2f2f7; margin-bottom: 5px; font-size: 26px; font-weight: bold;'>ACCIÓN CONTRA: {proceso_fila['demandado']}</h2>
                             <div style='color: #8e8e93; font-size: 13px; margin-top: -5px;'>
                                 <span style='display: inline-block; width: 45%; text-align: right; padding-right: 25px;'>Identificación Demandante(s): {id_dem}</span>
                                 <span style='display: inline-block; width: 45%; text-align: left; padding-left: 25px;'>Identificación Demandado(s): {id_ddo}</span>
                             </div>
                         </div>
                         <div class='ficha-tecnica'>
-                            <b>Naturaleza:</b> {proceso_fila['naturaleza']}<br>
-                            <b>Despacho:</b> {proceso_fila['juzgado']}<br>
-                            <b>Radicado Rama:</b> {proceso_fila['radicado_rama']}<br>
-                            <b>Expediente Interno:</b> {radicado_seleccionado} | <b>Estado:</b> {estado_proceso}<br>
-                            <b>Pretensiones / Cuantía:</b> ${val_pret_ficha:,.2f}<br>
-                            <b>Medidas Cautelares:</b> {medidas_texto}<br>
+                            <b>Naturaleza:</b> {proceso_fila['naturaleza']}<br><b>Despacho:</b> {proceso_fila['juzgado']}<br>
+                            <b>Radicado Rama:</b> {proceso_fila['radicado_rama']}<br><b>Expediente Interno:</b> {radicado_seleccionado} | <b>Estado:</b> {estado_proceso}<br>
+                            <b>Pretensiones / Cuantía:</b> ${val_pret_ficha:,.2f}<br><b>Medidas Cautelares:</b> {medidas_texto}<br>
                             <b>Abogado Responsable:</b> {proceso_fila['abogado_asignado']}
                         </div>
                     """, unsafe_allow_html=True)
@@ -662,7 +564,7 @@ elif menu == "Expedientes":
                         with st.form(key=f"form_editar_proc_{radicado_seleccionado}"):
                             c_e1, c_e2, c_e3, c_e4 = st.columns(4)
                             n_nat = c_e1.selectbox("Naturaleza", lista_procesos, index=lista_procesos.index(proceso_fila['naturaleza']) if proceso_fila['naturaleza'] in lista_procesos else 0)
-                            n_dem = c_e2.text_input("Demandado(s)", value=proceso_fila['demandado'], help="Puede separar múltiples nombres con barra (|)")
+                            n_dem = c_e2.text_input("Demandado(s)", value=proceso_fila['demandado'])
                             n_rad = c_e3.text_input("Radicado Rama", value=proceso_fila['radicado_rama'] if proceso_fila['radicado_rama'] != "EN REPARTO" else "")
                             n_estado = c_e4.selectbox("Estado", ["Activo", "Terminado"], index=0 if estado_proceso == "Activo" else 1)
 
@@ -684,12 +586,11 @@ elif menu == "Expedientes":
                             n_med = c_e7.text_input("Medidas Cautelares", value=proceso_fila['medidas_cautelares'])
 
                             if st.form_submit_button("💾 Guardar Cambios"):
-                                if actualizar_juz: juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}"
-                                else: juz_guardar = proceso_fila['juzgado']
+                                juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}" if actualizar_juz else proceso_fila['juzgado']
                                 rad_guardar = n_rad if n_rad else "EN REPARTO"
                                 
                                 conn_up = conectar_bd()
-                                conn_up.cursor().execute("""UPDATE procesos SET naturaleza=?, demandado=?, radicado_rama=?, juzgado=?, pretensiones=?, medidas_cautelares=?, abogado_id=?, estado=? WHERE radicado_interno=?""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
+                                conn_up.cursor().execute("""UPDATE procesos SET naturaleza=%s, demandado=%s, radicado_rama=%s, juzgado=%s, pretensiones=%s, medidas_cautelares=%s, abogado_id=%s, estado=%s WHERE radicado_interno=%s""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
                                 conn_up.commit()
                                 conn_up.close()
                                 st.session_state['toast_msg'] = "Expediente actualizado exitosamente."
@@ -697,13 +598,13 @@ elif menu == "Expedientes":
                                 st.rerun()
 
                     with st.expander("🚨 Zona de Riesgo: Eliminar Expediente"):
-                        st.warning("Esta acción eliminará permanentemente el expediente, actuaciones, vencimientos y gastos asociados.")
+                        st.warning("Esta acción eliminará permanentemente el expediente en la nube.")
                         if st.button("🗑️ Eliminar Expediente Completamente"):
                             conn_del = conectar_bd()
-                            conn_del.cursor().execute("DELETE FROM procesos WHERE radicado_interno=?", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM actuaciones WHERE radicado_interno=?", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM vencimientos WHERE radicado_interno=?", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM gastos WHERE radicado_interno=?", (radicado_seleccionado,))
+                            conn_del.cursor().execute("DELETE FROM procesos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                            conn_del.cursor().execute("DELETE FROM actuaciones WHERE radicado_interno=%s", (radicado_seleccionado,))
+                            conn_del.cursor().execute("DELETE FROM vencimientos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                            conn_del.cursor().execute("DELETE FROM gastos WHERE radicado_interno=%s", (radicado_seleccionado,))
                             conn_del.commit()
                             conn_del.close()
                             st.session_state['toast_msg'] = f"Expediente {radicado_seleccionado} eliminado."
@@ -714,20 +615,15 @@ elif menu == "Expedientes":
                     col_a1, col_a2 = st.columns([1, 1.5])
                     with col_a1:
                         st.markdown("**📝 Registrar Actuación Procesal**")
-                        
                         f_act = st.date_input("Fecha", key=f"f_act_{radicado_seleccionado}")
                         e_act = st.selectbox("Etapa Procesal", lista_etapas, key=f"e_act_{radicado_seleccionado}")
-                        
-                        opciones_sub = list(mapa_subetapas[e_act].keys())
-                        sub_act = st.selectbox("Sub-etapa (Plazo automático)", opciones_sub, key=f"sub_act_{radicado_seleccionado}")
-                        
+                        sub_act = st.selectbox("Sub-etapa (Plazo automático)", list(mapa_subetapas[e_act].keys()), key=f"sub_act_{radicado_seleccionado}")
                         d_act = st.text_area("Detalle / Observaciones", key=f"d_act_{radicado_seleccionado}")
                         
-                        # LOGICA DE ALARMAS
                         dias_alarma = mapa_subetapas[e_act][sub_act]
                         if not es_ejecutivo:
                             dias_alarma = 0
-                            st.info("📌 **Proceso no ejecutivo:** Generación de alarmas automáticas de términos desactivada temporalmente para esta naturaleza.")
+                            st.info("📌 **Proceso no ejecutivo:** Alarmas automáticas desactivadas para esta naturaleza.")
                         elif dias_alarma > 0:
                             st.success(f"⏰ Término aplicable: **{dias_alarma} días hábiles**.")
                         else:
@@ -738,19 +634,19 @@ elif menu == "Expedientes":
                             cursor = conn_ins.cursor()
                             
                             if sub_act != "Observación":
-                                cursor.execute("UPDATE vencimientos SET estado='Completado' WHERE radicado_interno=? AND estado='Pendiente'", (radicado_seleccionado,))
+                                cursor.execute("UPDATE vencimientos SET estado='Completado' WHERE radicado_interno=%s AND estado='Pendiente'", (radicado_seleccionado,))
                             
                             detalle_completo = f"{sub_act}: {d_act}" if d_act else sub_act
-                            cursor.execute("INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (?, ?, ?, ?, ?)", (radicado_seleccionado, str(f_act), e_act, detalle_completo, usuario_seleccionado))
-                            cursor.execute("UPDATE procesos SET etapa_actual=? WHERE radicado_interno=?", (e_act, radicado_seleccionado))
+                            cursor.execute("INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)", (radicado_seleccionado, str(f_act), e_act, detalle_completo, usuario_seleccionado))
+                            cursor.execute("UPDATE procesos SET etapa_actual=%s WHERE radicado_interno=%s", (e_act, radicado_seleccionado))
                             
                             if dias_alarma > 0:
                                 fecha_alarma_principal = sumar_dias_habiles(f_act, dias_alarma)
-                                cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (?, ?, ?, ?)", (radicado_seleccionado, sub_act, fecha_alarma_principal, d_act))
+                                cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, sub_act, fecha_alarma_principal, d_act))
                             
                             conn_ins.commit()
                             conn_ins.close()
-                            st.session_state['toast_msg'] = "Actuación registrada con éxito."
+                            st.session_state['toast_msg'] = "Actuación registrada."
                             st.session_state['toast_icon'] = "📝"
                             st.rerun()
 
@@ -769,13 +665,13 @@ elif menu == "Expedientes":
                                     cb1, cb2 = st.columns(2)
                                     if cb1.form_submit_button("💾 Modificar"):
                                         conn_u = conectar_bd()
-                                        conn_u.cursor().execute("UPDATE actuaciones SET fecha=?, etapa=?, descripcion=? WHERE id=?", (n_f, n_e, n_d, r['id']))
+                                        conn_u.cursor().execute("UPDATE actuaciones SET fecha=%s, etapa=%s, descripcion=%s WHERE id=%s", (n_f, n_e, n_d, r['id']))
                                         conn_u.commit()
                                         conn_u.close()
                                         st.rerun()
                                     if cb2.form_submit_button("🗑️ Eliminar"):
                                         conn_d = conectar_bd()
-                                        conn_d.cursor().execute("DELETE FROM actuaciones WHERE id=?", (r['id'],))
+                                        conn_d.cursor().execute("DELETE FROM actuaciones WHERE id=%s", (r['id'],))
                                         conn_d.commit()
                                         conn_d.close()
                                         st.rerun()
@@ -786,20 +682,18 @@ elif menu == "Expedientes":
                         st.markdown("**💸 Control de Gastos y Costas**")
                         with st.form("form_gasto", clear_on_submit=True):
                             f_gasto = st.date_input("Fecha", key=f"f_gas_{radicado_seleccionado}")
-                            c_gasto = st.text_input("Concepto (Arancel, Copias, Notificación)", key=f"c_gas_{radicado_seleccionado}")
+                            c_gasto = st.text_input("Concepto", key=f"c_gas_{radicado_seleccionado}")
                             v_gasto = st.number_input("Valor ($)", min_value=0.0, step=10000.0, key=f"v_gas_{radicado_seleccionado}")
                             
                             if st.form_submit_button("💾 Registrar Gasto", use_container_width=True):
                                 if c_gasto and v_gasto > 0:
                                     conn_g = conectar_bd()
-                                    conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (?, ?, ?, ?)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
+                                    conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
                                     conn_g.commit()
                                     conn_g.close()
                                     st.session_state['toast_msg'] = "Gasto registrado."
                                     st.session_state['toast_icon'] = "💸"
                                     st.rerun()
-                                else:
-                                    st.error("Ingrese concepto y valor válidos.")
                                     
                     with col_g2:
                         st.markdown("**📊 Historial Financiero del Proceso**")
@@ -821,22 +715,18 @@ elif menu == "Expedientes":
                                         c_bg1, c_bg2 = st.columns(2)
                                         if c_bg1.form_submit_button("💾 Modificar"):
                                             conn_ug = conectar_bd()
-                                            conn_ug.cursor().execute("UPDATE gastos SET fecha=?, concepto=?, valor=? WHERE id=?", (n_fg, n_cg, n_vg, r['id']))
+                                            conn_ug.cursor().execute("UPDATE gastos SET fecha=%s, concepto=%s, valor=%s WHERE id=%s", (n_fg, n_cg, n_vg, r['id']))
                                             conn_ug.commit()
                                             conn_ug.close()
                                             st.rerun()
                                         if c_bg2.form_submit_button("🗑️ Eliminar"):
                                             conn_dg = conectar_bd()
-                                            conn_dg.cursor().execute("DELETE FROM gastos WHERE id=?", (r['id'],))
+                                            conn_dg.cursor().execute("DELETE FROM gastos WHERE id=%s", (r['id'],))
                                             conn_dg.commit()
                                             conn_dg.close()
                                             st.rerun()
-                        else:
-                            st.write("Sin gastos registrados.")
         else:
             st.warning("No se encontraron expedientes.")
-    else:
-        st.info("No hay procesos registrados en la base de datos.")
 
 # ==========================================
 # SECCIÓN 3: AGENDA 
@@ -857,7 +747,7 @@ elif menu == "Vencimientos":
             if st.form_submit_button("💾 Agendar Vencimiento"):
                 if tit_venc:
                     conn_v = conectar_bd()
-                    conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (?, ?, ?, ?)", (rad_sel, tit_venc, str(f_venc), obs_venc))
+                    conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (rad_sel, tit_venc, str(f_venc), obs_venc))
                     conn_v.commit()
                     conn_v.close()
                     st.session_state['toast_msg'] = "Término agendado con éxito."
@@ -871,35 +761,28 @@ elif menu == "Vencimientos":
         conn.close()
         
         venc_pendientes = venc_df[venc_df['estado'] == 'Pendiente']
-        
         if not venc_pendientes.empty:
             for idx, row in venc_pendientes.iterrows():
                 with st.expander(f"🔴 [{row['radicado_interno']}] {row['titulo']} (Vence: {row['fecha_vencimiento']})"):
                     with st.form(key=f"form_venc_edit_{row['id']}"):
                         u_tit = st.text_input("Tarea", value=row['titulo'])
-                        u_fec = st.text_input("Fecha Vencimiento (AAAA-MM-DD)", value=row['fecha_vencimiento'])
+                        u_fec = st.text_input("Fecha Vencimiento", value=row['fecha_vencimiento'])
                         u_est = st.selectbox("Estado", ["Pendiente", "Completado"], index=0)
-                        
                         cv1, cv2 = st.columns(2)
                         if cv1.form_submit_button("💾 Actualizar"):
                             conn_uv = conectar_bd()
-                            conn_uv.cursor().execute("UPDATE vencimientos SET titulo=?, fecha_vencimiento=?, estado=? WHERE id=?", (u_tit, u_fec, u_est, row['id']))
+                            conn_uv.cursor().execute("UPDATE vencimientos SET titulo=%s, fecha_vencimiento=%s, estado=%s WHERE id=%s", (u_tit, u_fec, u_est, row['id']))
                             conn_uv.commit()
                             conn_uv.close()
                             st.rerun()
                         if cv2.form_submit_button("🗑️ Eliminar"):
                             conn_dv = conectar_bd()
-                            conn_dv.cursor().execute("DELETE FROM vencimientos WHERE id=?", (row['id'],))
+                            conn_dv.cursor().execute("DELETE FROM vencimientos WHERE id=%s", (row['id'],))
                             conn_dv.commit()
                             conn_dv.close()
                             st.rerun()
         else:
-            st.success("✅ Agenda limpia. No hay alarmas pendientes.")
-
-        with st.expander("👁️ Historial de Tareas Completadas"):
-            venc_completados = venc_df[venc_df['estado'] == 'Completado']
-            for idx, row in venc_completados.iterrows():
-                st.caption(f"🟢 [{row['radicado_interno']}] {row['titulo']} | Cumplida: {row['fecha_vencimiento']}")
+            st.success("✅ Agenda limpia.")
 
 # ==========================================
 # SECCIÓN 4: DIRECTORIO 
@@ -911,8 +794,8 @@ elif menu == "Directorio":
     with c_d1:
         st.subheader("➕ Agregar Contacto")
         with st.form("form_cont", clear_on_submit=True):
-            id_c = st.text_input("Cédula / NIT", help="Los puntos o comas se eliminarán automáticamente al guardar.")
-            n_c = st.text_input("Nombre Completo o Razón Social").upper()
+            id_c = st.text_input("Cédula / NIT", help="Los puntos o comas se eliminarán automáticamente.")
+            n_c = st.text_input("Nombre Completo").upper()
             tipo_c = st.selectbox("Tipo", ["Cliente", "Contraparte", "Juzgado", "Perito", "Otro"])
             t_c = st.text_input("Teléfono")
             e_c = st.text_input("Email")
@@ -922,10 +805,10 @@ elif menu == "Directorio":
                 if n_c:
                     id_c_limpio = limpiar_identificacion(id_c)
                     conn_c = conectar_bd()
-                    conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (?, ?, ?, ?, ?, ?, ?)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
+                    conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (%s, %s, %s, %s, %s, %s, %s)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
                     conn_c.commit()
                     conn_c.close()
-                    st.session_state['toast_msg'] = "Contacto guardado."
+                    st.session_state['toast_msg'] = "Contacto guardado en Neon."
                     st.session_state['toast_icon'] = "📞"
                     st.rerun()
     
@@ -937,17 +820,9 @@ elif menu == "Directorio":
         
         if not df_cont.empty:
             df_cont = df_cont.fillna("")
-            
-            lista_busqueda = []
-            for i, r in df_cont.iterrows():
-                if r['identificacion']:
-                    lista_busqueda.append(f"{r['identificacion']} - {r['nombre']}")
-                else:
-                    lista_busqueda.append(r['nombre'])
-                    
+            lista_busqueda = [f"{r['identificacion']} - {r['nombre']}" if r['identificacion'] else r['nombre'] for i, r in df_cont.iterrows()]
             contacto_sel = st.selectbox("Seleccionar contacto:", lista_busqueda)
             nombre_puro = contacto_sel.split(" - ")[1] if " - " in contacto_sel else contacto_sel
-            
             datos_c = df_cont[df_cont['nombre'] == nombre_puro].iloc[0]
             
             with st.form(key="edit_contacto"):
@@ -963,7 +838,7 @@ elif menu == "Directorio":
                 if ce1.form_submit_button("💾 Guardar Cambios"):
                     e_id_c_limpio = limpiar_identificacion(e_id_c)
                     conn_ec = conectar_bd()
-                    conn_ec.cursor().execute("UPDATE contactos SET identificacion=?, nombre=?, tipo=?, telefono=?, email=?, direccion=?, ciudad=? WHERE id=?", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
+                    conn_ec.cursor().execute("UPDATE contactos SET identificacion=%s, nombre=%s, tipo=%s, telefono=%s, email=%s, direccion=%s, ciudad=%s WHERE id=%s", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
                     conn_ec.commit()
                     conn_ec.close()
                     st.session_state['toast_msg'] = "Contacto actualizado."
@@ -971,13 +846,11 @@ elif menu == "Directorio":
                     st.rerun()
                 if ce2.form_submit_button("🗑️ Eliminar"):
                     conn_dc = conectar_bd()
-                    conn_dc.cursor().execute("DELETE FROM contactos WHERE id=?", (int(datos_c['id']),))
+                    conn_dc.cursor().execute("DELETE FROM contactos WHERE id=%s", (int(datos_c['id']),))
                     conn_dc.commit()
                     conn_dc.close()
                     st.rerun()
             st.dataframe(df_cont.drop(columns=['id']), use_container_width=True)
-        else:
-            st.info("Directorio vacío.")
 
 # ==========================================
 # SECCIÓN 5: RESUMEN E INFORMES (EXCEL)
@@ -987,17 +860,10 @@ elif menu == "Informes":
     conn = conectar_bd()
     total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
     conn.close()
-    st.markdown(f"""
-        <div class='metric-card' style='max-width: 300px; margin-bottom: 25px;'>
-            <h2 style='color: #0a84ff; margin:0;'>📁 {total_p}</h2>
-            <p style='color: #8e8e93; margin:5px 0 0 0; font-weight:500;'>Procesos Totales Registrados</p>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"<div class='metric-card' style='max-width:300px;margin-bottom:25px;'><h2 style='color:#0a84ff;margin:0;'>📁 {total_p}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos en Base de Datos</p></div>", unsafe_allow_html=True)
     
     st.markdown("---")
     st.subheader("Reporte General en Excel")
-    st.write("Genera y descarga un archivo corporativo en formato Excel (.xlsx) con la consolidación de procesos, historiales de actuaciones unificados por expediente de forma cronológica, vencimientos y gastos.")
-    
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         conn_rep = conectar_bd()
@@ -1011,11 +877,7 @@ elif menu == "Informes":
         actuaciones_consolidadas = {}
         for rad in df_proc_r['radicado_interno']:
             acts_subset = df_act_r[df_act_r['radicado_interno'] == rad]
-            textos = []
-            for _, act in acts_subset.iterrows():
-                usuario_str = f" (Por: {act['usuario']})" if act['usuario'] else ""
-                textos.append(f"[{act['fecha']}] {act['etapa']} - {act['descripcion']}{usuario_str}")
-            actuaciones_consolidadas[rad] = "\n".join(textos)
+            actuaciones_consolidadas[rad] = "\n".join([f"[{a['fecha']}] {a['etapa']} - {a['descripcion']} (Por: {a['usuario']})" for _, a in acts_subset.iterrows()])
             
         df_proc_r['Historial_Actuaciones'] = df_proc_r['radicado_interno'].map(actuaciones_consolidadas)
         
@@ -1025,15 +887,7 @@ elif menu == "Informes":
         df_cont_r.to_excel(writer, sheet_name='Directorio', index=False)
         df_act_r.to_excel(writer, sheet_name='Actuaciones', index=False)
         
-    excel_data = output.getvalue()
-    
-    st.download_button(
-        label="📥 Descargar Reporte Ejecutivo (.xlsx)",
-        data=excel_data,
-        file_name=f"informe_judicial_{date.today()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    st.download_button(label="📥 Descargar Reporte Ejecutivo (.xlsx)", data=output.getvalue(), file_name=f"informe_judicial_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 # ==========================================
 # SECCIÓN 6: ADMINISTRACIÓN 
@@ -1053,14 +907,14 @@ elif menu == "Administración":
                 if st.form_submit_button("💾 Crear Perfil"):
                     try:
                         conn_m = conectar_bd()
-                        conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (?, ?, ?, ?, ?)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
+                        conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
                         conn_m.commit()
                         conn_m.close()
                         st.session_state['toast_msg'] = "Perfil creado con éxito."
                         st.session_state['toast_icon'] = "👥"
                         st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Ya existe un usuario registrado con ese nombre.")
+                    except psycopg2.IntegrityError:
+                        st.error("Ya existe un usuario registrado con ese nombre en la base de datos.")
         with c_m2:
             st.subheader("✏️ Gestión de Credenciales")
             conn = conectar_bd()
@@ -1078,21 +932,18 @@ elif menu == "Administración":
                     c_b1, c_b2 = st.columns(2)
                     if c_b1.form_submit_button("💾 Guardar Cambios"):
                         conn_ea = conectar_bd()
-                        if ed_p:
-                            conn_ea.cursor().execute("UPDATE abogados SET nombre=?, email=?, telefono=?, rol=?, password=? WHERE id=?", (ed_n, ed_e, ed_t, ed_r, ed_p, int(datos_a['id'])))
-                        else:
-                            conn_ea.cursor().execute("UPDATE abogados SET nombre=?, email=?, telefono=?, rol=? WHERE id=?", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
+                        if ed_p: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s, password=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, ed_p, int(datos_a['id'])))
+                        else: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
                         conn_ea.commit()
                         conn_ea.close()
                         st.session_state['toast_msg'] = "Modificaciones de seguridad guardadas."
                         st.session_state['toast_icon'] = "🔐"
                         st.rerun()
                     if c_b2.form_submit_button("🗑️ Eliminar Perfil"):
-                        if abg_editar == "ADMINISTRADOR MAESTRO":
-                            st.error("No es posible eliminar al administrador principal.")
+                        if abg_editar == "ADMINISTRADOR MAESTRO": st.error("No es posible eliminar al administrador principal.")
                         else:
                             conn_da = conectar_bd()
-                            conn_da.cursor().execute("DELETE FROM abogados WHERE id=?", (int(datos_a['id']),))
+                            conn_da.cursor().execute("DELETE FROM abogados WHERE id=%s", (int(datos_a['id']),))
                             conn_da.commit()
                             conn_da.close()
                             st.session_state['toast_msg'] = "Perfil eliminado."
