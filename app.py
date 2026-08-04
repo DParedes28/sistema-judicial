@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta
 import holidays
 import io
 import plotly.express as px
+from streamlit_option_menu import option_menu
 
 # --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE (CUPERTINO) ---
 st.set_page_config(page_title="Sistema de Gestión Judicial", layout="wide")
@@ -38,7 +39,6 @@ st.markdown("""
         font-size: 13px !important;
     }
     
-    /* Campos de entrada modo oscuro */
     input[type="text"], textarea, input[type="number"], input[type="password"] {
         background-color: #1c1c1e !important; 
         border: 1px solid #38383a !important;
@@ -53,7 +53,6 @@ st.markdown("""
         box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.15) !important;
     }
     
-    /* Fichas técnicas Glassmorphism Dark */
     .ficha-tecnica {
         background: rgba(28, 28, 30, 0.8);
         backdrop-filter: blur(12px);
@@ -66,7 +65,6 @@ st.markdown("""
         box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
     }
     
-    /* Badge de usuario */
     .user-badge {
         background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%);
         color: #f2f2f7; 
@@ -77,9 +75,10 @@ st.markdown("""
         display: inline-block; 
         margin-bottom: 15px;
         border: 1px solid #38383a;
+        width: 100%;
+        text-align: center;
     }
     
-    /* Tarjetas de métricas interactivas */
     .metric-card {
         background: #1c1c1e; 
         border: 1px solid #38383a; 
@@ -100,46 +99,11 @@ st.markdown("""
         border-right: 1px solid #1c1c1e;
     }
     
-/* --- SUPER MENÚ LATERAL DEFINITIVO --- */
-    
-    /* 1. Ocultar los círculos rojos nativos a la fuerza */
-    div[data-testid="stSidebar"] div[role="radiogroup"] label div[data-baseweb="radio"] > div:first-child,
-    div[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
-        display: none !important;
-    }
-
-    /* 2. Convertir las opciones en botones amplios */
-    div[data-testid="stSidebar"] div[role="radiogroup"] label {
+    div[data-baseweb="select"] > div {
         background-color: #1c1c1e !important;
-        border: 1px solid #2c2c2e !important;
-        padding: 14px 20px !important;
-        border-radius: 12px !important;
-        margin-bottom: 12px !important;
-        width: 100% !important;
-        cursor: pointer !important;
-        transition: all 0.25s ease !important;
-    }
-
-    /* 3. Efecto al pasar el cursor (Hover) */
-    div[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
-        background-color: #2c2c2e !important;
-        border-color: #8e8e93 !important;
-        transform: translateY(-2px) !important;
-    }
-
-    /* 4. Efecto de "Botón Presionado/Activo" en color Azul */
-    div[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
-        background-color: #0a84ff !important;
-        border-color: #005ecb !important;
-        box-shadow: 0 4px 15px rgba(10, 132, 255, 0.3) !important;
-    }
-
-    /* 5. Ajuste del texto interno */
-    div[data-testid="stSidebar"] div[role="radiogroup"] label p {
-        font-size: 16px !important;
-        font-weight: 600 !important;
-        color: #ffffff !important;
-        margin: 0 !important;
+        border-color: #38383a !important;
+        color: #f2f2f7 !important;
+        border-radius: 10px !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -167,7 +131,6 @@ def crear_tablas():
     cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor REAL)''')
     
-    # Migraciones
     cursor.execute("PRAGMA table_info(procesos)")
     cols_procesos = [col[1] for col in cursor.fetchall()]
     if 'abogado_id' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN abogado_id INTEGER")
@@ -239,7 +202,7 @@ else:
     usuario_id = st.session_state.usuario_id
     usuario_rol = st.session_state.usuario_rol
     
-    st.sidebar.markdown(f"<div class='user-badge'>👤 {usuario_seleccionado}<br><span style='color:#8e8e93;'>{usuario_rol}</span></div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div class='user-badge'>👤 <b>{usuario_seleccionado}</b><br><span style='color:#8e8e93;'>{usuario_rol}</span></div>", unsafe_allow_html=True)
     if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.usuario_nombre = None
@@ -248,15 +211,33 @@ else:
         st.rerun()
         
     st.sidebar.markdown("---")
-    menu = st.sidebar.radio("Navegación", [
-        "🏠 Inicio", 
-        "📝 Nuevo Proceso", 
-        "📂 Expedientes", 
-        "⏰ Vencimientos", 
-        "📞 Directorio", 
-        "📊 Resumen e Informes", 
-        "👥 Administración"
-    ])
+    
+    # --- EL NUEVO MENÚ PROFESIONAL ---
+    with st.sidebar:
+        menu = option_menu(
+            menu_title=None,
+            options=["Inicio", "Nuevo Proceso", "Expedientes", "Vencimientos", "Directorio", "Informes", "Administración"],
+            icons=["house", "file-earmark-plus", "folder2-open", "alarm", "book", "graph-up", "people"],
+            default_index=0,
+            styles={
+                "container": {"padding": "0!important", "background-color": "transparent"},
+                "icon": {"color": "#8e8e93", "font-size": "18px"},
+                "nav-link": {
+                    "font-size": "15px", 
+                    "text-align": "left", 
+                    "margin":"4px 0px", 
+                    "padding": "12px",
+                    "color": "#f2f2f7", 
+                    "border-radius": "10px",
+                    "font-weight": "600"
+                },
+                "nav-link-selected": {
+                    "background-color": "#1c1c1e", 
+                    "color": "#0a84ff", 
+                    "border": "1px solid #38383a"
+                },
+            }
+        )
 
 # --- DÍAS HÁBILES Y FUNCIONES ---
 festivos_colombia = holidays.Colombia()
@@ -296,14 +277,9 @@ def generar_radicado_interno():
 
 lista_procesos = ["EJECUTIVO SINGULAR", "EJECUTIVO HIPOTECARIO", "EJECUTIVO MIXTO", "ORDINARIO LABORAL", "OTRO"]
 lista_etapas = [
-    "1. Presentación de la demanda", 
-    "2. Inadmisión", 
-    "3. Admisión", 
-    "4. Medidas Cautelares", 
-    "5. Notificación", 
-    "6. Excepciones", 
-    "7. Sentencia", 
-    "8. Desistimiento tácito"
+    "1. Presentación de la demanda", "2. Inadmisión", "3. Admisión", 
+    "4. Medidas Cautelares", "5. Notificación", "6. Excepciones", 
+    "7. Sentencia", "8. Desistimiento tácito"
 ]
 lista_juzgados_esp = ["CIVIL MUNICIPAL", "CIVIL DEL CIRCUITO", "LABORAL", "DE FAMILIA", "PROMISCUO MUNICIPAL", "DE PEQUEÑAS CAUSAS"]
 
@@ -318,7 +294,6 @@ mapa_subetapas = {
     "8. Desistimiento tácito": {"Impulso o memorial": 30, "Observación": 0}
 }
 
-# --- SISTEMA DE TOASTS (NOTIFICACIONES FLOTANTES) ---
 if 'toast_msg' in st.session_state:
     st.toast(st.session_state['toast_msg'], icon=st.session_state.get('toast_icon', '✅'))
     del st.session_state['toast_msg']
@@ -332,7 +307,7 @@ fk = st.session_state.form_key
 # ==========================================
 # SECCIÓN 0: INICIO (DASHBOARD GERENCIAL)
 # ==========================================
-if menu == "🏠 Inicio":
+if menu == "Inicio":
     st.header(f"Panel de Control | {usuario_seleccionado}")
     st.write("Panorama operativo general de la práctica jurídica y agenda de términos.")
     
@@ -345,7 +320,6 @@ if menu == "🏠 Inicio":
     limite_urgente = str(date.today() + timedelta(days=5))
     hoy_str = str(date.today())
     venc_urgentes_df = pd.read_sql_query(f"SELECT COUNT(*) as c FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}'", conn).iloc[0]['c']
-    
     conn.close()
     
     col_k1, col_k2, col_k3 = st.columns(3)
@@ -372,7 +346,6 @@ if menu == "🏠 Inicio":
         """, unsafe_allow_html=True)
         
     st.markdown("---")
-    
     c_grafico, c_radar = st.columns([1, 1.5])
     
     with c_grafico:
@@ -380,7 +353,6 @@ if menu == "🏠 Inicio":
         if total_activos == 0 and total_terminados == 0:
             st.info("No hay procesos registrados para graficar.")
         else:
-            # Gráfico de Plotly Premium Dark
             df_chart = pd.DataFrame({
                 'Estado': ['Activos', 'Terminados'], 
                 'Cantidad': [total_activos, total_terminados]
@@ -418,7 +390,7 @@ if menu == "🏠 Inicio":
 # ==========================================
 # SECCIÓN 1: REGISTRAR PROCESO
 # ==========================================
-elif menu == "📝 Nuevo Proceso":
+elif menu == "Nuevo Proceso":
     st.header("Registro de Nuevo Proceso")
     
     with st.container(border=True):
@@ -551,9 +523,9 @@ elif menu == "📝 Nuevo Proceso":
                 conn.close()
 
 # ==========================================
-# SECCIÓN 2: EXPEDIENTES (BÚSQUEDA Y EDICIÓN)
+# SECCIÓN 2: EXPEDIENTES
 # ==========================================
-elif menu == "📂 Expedientes":
+elif menu == "Expedientes":
     st.header("Gestión de Expedientes")
     conn = conectar_bd()
     
@@ -795,7 +767,7 @@ elif menu == "📂 Expedientes":
 # ==========================================
 # SECCIÓN 3: AGENDA 
 # ==========================================
-elif menu == "⏰ Vencimientos":
+elif menu == "Vencimientos":
     st.header("Control de Vencimientos y Términos")
     c_ag1, c_ag2 = st.columns([1, 1.5])
     with c_ag1:
@@ -858,7 +830,7 @@ elif menu == "⏰ Vencimientos":
 # ==========================================
 # SECCIÓN 4: DIRECTORIO 
 # ==========================================
-elif menu == "📞 Directorio":
+elif menu == "Directorio":
     st.header("Directorio de Contactos")
     c_d1, c_d2 = st.columns([1, 1.5])
     
@@ -934,7 +906,7 @@ elif menu == "📞 Directorio":
 # ==========================================
 # SECCIÓN 5: RESUMEN E INFORMES (EXCEL)
 # ==========================================
-elif menu == "📊 Resumen e Informes":
+elif menu == "Informes":
     st.header("Informes y Exportación de Datos")
     conn = conectar_bd()
     total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
@@ -990,7 +962,7 @@ elif menu == "📊 Resumen e Informes":
 # ==========================================
 # SECCIÓN 6: ADMINISTRACIÓN 
 # ==========================================
-elif menu == "👥 Administración":
+elif menu == "Administración":
     st.header("Administración de Perfiles y Seguridad")
     if usuario_rol == "Maestro":
         c_m1, c_m2 = st.columns([1, 1.5])
