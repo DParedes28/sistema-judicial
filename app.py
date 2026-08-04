@@ -100,11 +100,13 @@ st.markdown("""
         border-right: 1px solid #1c1c1e;
     }
     
+    /* --- AGRANDAR TEXTO Y TAMAÑO DE LOS BOTONES DEL MENÚ --- */
     div[data-testid="stSidebar"] div.stRadio label p {
-        font-size: 15px !important;
-        font-weight: 500 !important;
-        padding: 8px 12px;
-        border-radius: 8px;
+        font-size: 18px !important; 
+        font-weight: 600 !important; 
+        padding: 14px 18px !important; 
+        margin-bottom: 8px !important; 
+        border-radius: 10px !important;
         transition: all 0.2s ease;
         color: #e5e5ea;
     }
