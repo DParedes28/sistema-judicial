@@ -74,7 +74,7 @@ def conectar_bd():
 @st.cache_data(ttl=60)
 def cargar_abogados():
     conn = conectar_bd()
-    df = pd.read_sql_query("SELECT id, nombre, rol, password FROM abogados", conn)
+    df = pd.read_sql_query("SELECT id, nombre, rol, password, email, telefono FROM abogados", conn)
     conn.close()
     return df
 
@@ -92,6 +92,7 @@ def cargar_contactos_general():
     df = pd.read_sql_query("SELECT * FROM contactos", conn)
     conn.close()
     return df
+
 def limpiar_identificacion(texto):
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
@@ -113,6 +114,14 @@ def crear_tablas():
     cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
     
+    # Migraciones seguras automáticas
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
+    cols_abgs = [col[0] for col in cursor.fetchall()]
+    if 'email' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN email TEXT")
+    if 'telefono' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN telefono TEXT")
+    if 'password' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
+    if 'rol' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN rol TEXT DEFAULT 'Abogado'")
+
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'procesos'")
     cols_procesos = [col[0] for col in cursor.fetchall()]
     if 'abogado_id' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN abogado_id INTEGER")
@@ -123,12 +132,6 @@ def crear_tablas():
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contactos'")
     cols_contactos = [col[0] for col in cursor.fetchall()]
     if 'identificacion' not in cols_contactos: cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
-    cols_abogados = [col[0] for col in cols_procesos] # safe fallback
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
-    cols_abgs = [col[0] for col in cursor.fetchall()]
-    if 'password' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
 
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
     cols_act = [col[0] for col in cursor.fetchall()]
@@ -304,7 +307,7 @@ if menu == "Inicio":
         SELECT 
             (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
             (SELECT COUNT(*) FROM procesos WHERE estado='Terminado') as total_terminados,
-            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%') as sum_pretensiones,
+            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND natureza LIKE '%EJECUTIVO%') as sum_pretensiones,
             (SELECT COUNT(*) FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}') as venc_urgentes
     """
     df_kpis = pd.read_sql_query(query_kpis, conn)
@@ -500,7 +503,7 @@ elif menu == "Nuevo Proceso":
                 st.session_state.num_dem_nuevos = 0
                 st.session_state.num_ddo_nuevos = 0
                 st.session_state.form_key += 1 
-                st.cache_data.clear() # Limpiar caché para refrescar datos en Neon
+                st.cache_data.clear()
                 st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente en Neon."
                 st.session_state['toast_icon'] = "☁️"
                 st.rerun() 
@@ -942,8 +945,8 @@ elif menu == "Administración":
                 datos_a = df_abg[df_abg['nombre'] == abg_editar].iloc[0]
                 with st.form(key="edit_abg"):
                     ed_n = st.text_input("Nombre", value=datos_a['nombre']).upper()
-                    ed_e = st.text_input("Correo", value=datos_a['email'])
-                    ed_t = st.text_input("Teléfono", value=datos_a['telefono'])
+                    ed_e = st.text_input("Correo", value=datos_a['email'] if pd.notna(datos_a['email']) else "")
+                    ed_t = st.text_input("Teléfono", value=datos_a['telefono'] if pd.notna(datos_a['telefono']) else "")
                     ed_p = st.text_input("Nueva Contraseña (dejar en blanco para mantener actual)", type="password")
                     ed_r = st.selectbox("Rol", ["Abogado", "Maestro"], index=0 if datos_a['rol'] == "Abogado" else 1)
                     c_b1, c_b2 = st.columns(2)
