@@ -4,3 +4,4 @@ holidays
 openpyxl
 plotly
 streamlit-option-menu
+psycopg2-binary
