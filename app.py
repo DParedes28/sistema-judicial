@@ -9,7 +9,6 @@ import plotly.express as px
 from streamlit_option_menu import option_menu
 import warnings
 
-# Ocultar advertencias de Pandas sobre conexiones directas a DB
 warnings.filterwarnings('ignore')
 
 # --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE ---
@@ -23,12 +22,6 @@ st.markdown("""
         background-color: #000000; 
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif;
         color: #f2f2f7;
-        animation: fadeIn 0.4s ease-out;
-    }
-    
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(6px); }
-        to { opacity: 1; transform: translateY(0); }
     }
     
     h1, h2, h3 { color: #f2f2f7 !important; font-weight: 600 !important; letter-spacing: -0.025em; }
@@ -39,7 +32,7 @@ st.markdown("""
     
     input[type="text"], textarea, input[type="number"], input[type="password"] {
         background-color: #1c1c1e !important; border: 1px solid #38383a !important; border-radius: 10px !important; 
-        padding: 10px 14px !important; color: #f2f2f7 !important; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        padding: 10px 14px !important; color: #f2f2f7 !important;
     }
     
     input[type="text"]:focus, textarea:focus, input[type="number"]:focus, input[type="password"]:focus {
@@ -74,8 +67,8 @@ st.markdown("""
 
 st.title("Sistema de Gestión Judicial")
 
-# --- CONEXIÓN A POSTGRESQL (NEON) CON CACHÉ ---
-@st.cache_resource(ttl="2h")
+# --- CONEXIÓN A POSTGRESQL (NEON) CON DOBLE CACHÉ ---
+@st.cache_resource(ttl="4h")
 def init_connection():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
@@ -87,7 +80,31 @@ def conectar_bd():
         return conn
     except Exception:
         st.cache_resource.clear()
+        st.cache_data.clear()
         return init_connection()
+
+@st.cache_data(ttl=60)
+def cargar_abogados():
+    conn = conectar_bd()
+    df = pd.read_sql_query("SELECT id, nombre, rol, password FROM abogados", conn)
+    conn.close()
+    return df
+
+@st.cache_data(ttl=60)
+def cargar_procesos_general():
+    conn = conectar_bd()
+    query = '''SELECT p.*, c.nombre AS demandante_db, a.nombre AS abogado_asignado FROM procesos p LEFT JOIN clientes c ON p.id_cliente = c.identificacion LEFT JOIN abogados a ON p.abogado_id = a.id'''
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+@st.cache_data(ttl=60)
+def cargar_contactos_general():
+    conn = conectar_bd()
+    df = pd.read_sql_query("SELECT * FROM contactos", conn)
+    conn.close()
+    return df
+
 def limpiar_identificacion(texto):
     if pd.isna(texto) or not texto: return ""
     return str(texto).replace(".", "").replace(",", "").replace(" ", "").strip().upper()
@@ -118,18 +135,17 @@ def crear_tablas():
 
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contactos'")
     cols_contactos = [col[0] for col in cursor.fetchall()]
-    if 'identificacion' not in cols_contactos: 
-        cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
+    if 'identificacion' not in cols_contactos: cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
 
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
-    cols_abogados = [col[0] for col in cursor.fetchall()]
-    if 'password' not in cols_abogados:
-        cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
+    cols_abogados = [col[0] for col in cols_procesos] # safe fallback
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
+    cols_abgs = [col[0] for col in cursor.fetchall()]
+    if 'password' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
 
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
-    cols_actuaciones = [col[0] for col in cursor.fetchall()]
-    if 'usuario' not in cols_actuaciones:
-        cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
+    cols_act = [col[0] for col in cursor.fetchall()]
+    if 'usuario' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
         
     cursor.execute("SELECT COUNT(*) FROM abogados")
     if cursor.fetchone()[0] == 0:
@@ -141,13 +157,11 @@ def crear_tablas():
 try:
     crear_tablas()
 except Exception as e:
-    st.error(f"Error conectando a la base de datos Neon: {e}")
+    st.error(f"Error conectando a Neon: {e}")
 
 # --- CONTROL DE ACCESO ---
 st.sidebar.title("Control de Acceso")
-conn = conectar_bd()
-abogados_db = pd.read_sql_query("SELECT id, nombre, rol, password FROM abogados", conn)
-conn.close()
+abogados_db = cargar_abogados()
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -296,15 +310,23 @@ if menu == "Inicio":
     st.write("Panorama operativo general de la práctica jurídica y agenda de términos.")
     
     conn = conectar_bd()
-    total_activos = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Activo'", conn).iloc[0]['c']
-    total_terminados = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos WHERE estado='Terminado'", conn).iloc[0]['c']
-    
-    sum_pretensiones = pd.read_sql_query("SELECT SUM(pretensiones) as s FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%'", conn).iloc[0]['s']
-    sum_pretensiones = sum_pretensiones if pd.notna(sum_pretensiones) else 0.0
-    
     limite_urgente = str(date.today() + timedelta(days=5))
     hoy_str = str(date.today())
-    venc_urgentes_df = pd.read_sql_query(f"SELECT COUNT(*) as c FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}'", conn).iloc[0]['c']
+    
+    query_kpis = f"""
+        SELECT 
+            (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
+            (SELECT COUNT(*) FROM procesos WHERE estado='Terminado') as total_terminados,
+            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%') as sum_pretensiones,
+            (SELECT COUNT(*) FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}') as venc_urgentes
+    """
+    df_kpis = pd.read_sql_query(query_kpis, conn)
+    total_activos = int(df_kpis.iloc[0]['total_activos'])
+    total_terminados = int(df_kpis.iloc[0]['total_terminados'])
+    sum_pretensiones = float(df_kpis.iloc[0]['sum_pretensiones'])
+    venc_urgentes_df = int(df_kpis.iloc[0]['venc_urgentes'])
+    
+    radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
     conn.close()
     
     col_k1, col_k2, col_k3 = st.columns(3)
@@ -330,10 +352,6 @@ if menu == "Inicio":
 
     with c_radar:
         st.subheader("Radar de Vencimientos")
-        conn = conectar_bd()
-        radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
-        conn.close()
-        
         if not radar_df.empty:
             for idx, r in radar_df.iterrows():
                 estado_alerta = "🔴 VENCIDO" if r['fecha_vencimiento'] < hoy_str else "⚠️ VENCE HOY" if r['fecha_vencimiento'] == hoy_str else "⏰ Próximo a vencer"
@@ -373,14 +391,11 @@ elif menu == "Nuevo Proceso":
         st.subheader("3. Partes Intervinientes (Litisconsorcio)")
         st.caption("Los puntos o espacios en las cédulas serán eliminados automáticamente para mantener la base de datos estandarizada.")
         
-        conn = conectar_bd()
-        contactos_df = pd.read_sql_query("SELECT identificacion, nombre, tipo FROM contactos WHERE identificacion IS NOT NULL AND identificacion != ''", conn)
-        conn.close()
-        
-        clientes_db = contactos_df[contactos_df['tipo'] == 'Cliente']
+        contactos_df = cargar_contactos_general()
+        clientes_db = contactos_df[contactos_df['tipo'] == 'Cliente'] if not contactos_df.empty else pd.DataFrame()
         lista_opciones_c = (clientes_db['identificacion'] + " - " + clientes_db['nombre']).tolist() if not clientes_db.empty else []
         
-        contrapartes_db = contactos_df[contactos_df['tipo'] == 'Contraparte']
+        contrapartes_db = contactos_df[contactos_df['tipo'] == 'Contraparte'] if not contactos_df.empty else pd.DataFrame()
         lista_opciones_d = (contrapartes_db['identificacion'] + " - " + contrapartes_db['nombre']).tolist() if not contrapartes_db.empty else []
         
         col_d1, col_d2 = st.columns(2)
@@ -424,9 +439,7 @@ elif menu == "Nuevo Proceso":
         col_p1, col_p2 = st.columns([1, 1])
         pretensiones = col_p1.number_input("Pretensiones / Cuantía ($)", min_value=0.0, step=50000.0, key=f"pret_{fk}")
         
-        conn = conectar_bd()
-        abogados_activos = pd.read_sql_query("SELECT id, nombre FROM abogados", conn)
-        conn.close()
+        abogados_activos = cargar_abogados()
         dic_abogados = {row['nombre']: row['id'] for index, row in abogados_activos.iterrows()}
         abogado_sel_nombre = col_p2.selectbox("Abogado Responsable", list(dic_abogados.keys()), index=list(dic_abogados.keys()).index(usuario_seleccionado) if usuario_seleccionado in dic_abogados else 0, key=f"abg_{fk}")
         abogado_asignado_id = dic_abogados[abogado_sel_nombre]
@@ -500,6 +513,7 @@ elif menu == "Nuevo Proceso":
                 st.session_state.num_dem_nuevos = 0
                 st.session_state.num_ddo_nuevos = 0
                 st.session_state.form_key += 1 
+                st.cache_data.clear() # Limpiar caché para refrescar datos en Neon
                 st.session_state['toast_msg'] = f"Expediente {radicado_interno} registrado correctamente en Neon."
                 st.session_state['toast_icon'] = "☁️"
                 st.rerun() 
@@ -513,12 +527,8 @@ elif menu == "Nuevo Proceso":
 # ==========================================
 elif menu == "Expedientes":
     st.header("Gestión de Expedientes")
-    conn = conectar_bd()
-    
-    query = '''SELECT p.*, c.nombre AS demandante_db, a.nombre AS abogado_asignado FROM procesos p LEFT JOIN clientes c ON p.id_cliente = c.identificacion LEFT JOIN abogados a ON p.abogado_id = a.id'''
-    df_procesos = pd.read_sql_query(query, conn)
-    abogados_df = pd.read_sql_query("SELECT id, nombre FROM abogados", conn)
-    conn.close()
+    df_procesos = cargar_procesos_general()
+    abogados_df = cargar_abogados()
     
     if not df_procesos.empty:
         df_procesos = df_procesos.fillna("")
@@ -602,6 +612,7 @@ elif menu == "Expedientes":
                                 conn_up.cursor().execute("""UPDATE procesos SET naturaleza=%s, demandado=%s, radicado_rama=%s, juzgado=%s, pretensiones=%s, medidas_cautelares=%s, abogado_id=%s, estado=%s WHERE radicado_interno=%s""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
                                 conn_up.commit()
                                 conn_up.close()
+                                st.cache_data.clear()
                                 st.session_state['toast_msg'] = "Expediente actualizado exitosamente."
                                 st.session_state['toast_icon'] = "✅"
                                 st.rerun()
@@ -616,6 +627,7 @@ elif menu == "Expedientes":
                             conn_del.cursor().execute("DELETE FROM gastos WHERE radicado_interno=%s", (radicado_seleccionado,))
                             conn_del.commit()
                             conn_del.close()
+                            st.cache_data.clear()
                             st.session_state['toast_msg'] = f"Expediente {radicado_seleccionado} eliminado."
                             st.session_state['toast_icon'] = "🗑️"
                             st.rerun()
@@ -655,6 +667,7 @@ elif menu == "Expedientes":
                             
                             conn_ins.commit()
                             conn_ins.close()
+                            st.cache_data.clear()
                             st.session_state['toast_msg'] = "Actuación registrada."
                             st.session_state['toast_icon'] = "📝"
                             st.rerun()
@@ -677,12 +690,14 @@ elif menu == "Expedientes":
                                         conn_u.cursor().execute("UPDATE actuaciones SET fecha=%s, etapa=%s, descripcion=%s WHERE id=%s", (n_f, n_e, n_d, r['id']))
                                         conn_u.commit()
                                         conn_u.close()
+                                        st.cache_data.clear()
                                         st.rerun()
                                     if cb2.form_submit_button("🗑️ Eliminar"):
                                         conn_d = conectar_bd()
                                         conn_d.cursor().execute("DELETE FROM actuaciones WHERE id=%s", (r['id'],))
                                         conn_d.commit()
                                         conn_d.close()
+                                        st.cache_data.clear()
                                         st.rerun()
                     
                     st.markdown("---")
@@ -700,6 +715,7 @@ elif menu == "Expedientes":
                                     conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
                                     conn_g.commit()
                                     conn_g.close()
+                                    st.cache_data.clear()
                                     st.session_state['toast_msg'] = "Gasto registrado."
                                     st.session_state['toast_icon'] = "💸"
                                     st.rerun()
@@ -727,12 +743,14 @@ elif menu == "Expedientes":
                                             conn_ug.cursor().execute("UPDATE gastos SET fecha=%s, concepto=%s, valor=%s WHERE id=%s", (n_fg, n_cg, n_vg, r['id']))
                                             conn_ug.commit()
                                             conn_ug.close()
+                                            st.cache_data.clear()
                                             st.rerun()
                                         if c_bg2.form_submit_button("🗑️ Eliminar"):
                                             conn_dg = conectar_bd()
                                             conn_dg.cursor().execute("DELETE FROM gastos WHERE id=%s", (r['id'],))
                                             conn_dg.commit()
                                             conn_dg.close()
+                                            st.cache_data.clear()
                                             st.rerun()
         else:
             st.warning("No se encontraron expedientes.")
@@ -759,6 +777,7 @@ elif menu == "Vencimientos":
                     conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (rad_sel, tit_venc, str(f_venc), obs_venc))
                     conn_v.commit()
                     conn_v.close()
+                    st.cache_data.clear()
                     st.session_state['toast_msg'] = "Término agendado con éxito."
                     st.session_state['toast_icon'] = "⏰"
                     st.rerun()
@@ -783,12 +802,14 @@ elif menu == "Vencimientos":
                             conn_uv.cursor().execute("UPDATE vencimientos SET titulo=%s, fecha_vencimiento=%s, estado=%s WHERE id=%s", (u_tit, u_fec, u_est, row['id']))
                             conn_uv.commit()
                             conn_uv.close()
+                            st.cache_data.clear()
                             st.rerun()
                         if cv2.form_submit_button("🗑️ Eliminar"):
                             conn_dv = conectar_bd()
                             conn_dv.cursor().execute("DELETE FROM vencimientos WHERE id=%s", (row['id'],))
                             conn_dv.commit()
                             conn_dv.close()
+                            st.cache_data.clear()
                             st.rerun()
         else:
             st.success("✅ Agenda limpia.")
@@ -817,15 +838,14 @@ elif menu == "Directorio":
                     conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (%s, %s, %s, %s, %s, %s, %s)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
                     conn_c.commit()
                     conn_c.close()
+                    st.cache_data.clear()
                     st.session_state['toast_msg'] = "Contacto guardado en Neon."
                     st.session_state['toast_icon'] = "📞"
                     st.rerun()
     
     with c_d2:
         st.subheader("🔎 Directorio General")
-        conn = conectar_bd()
-        df_cont = pd.read_sql_query("SELECT * FROM contactos", conn)
-        conn.close()
+        df_cont = cargar_contactos_general()
         
         if not df_cont.empty:
             df_cont = df_cont.fillna("")
@@ -850,6 +870,7 @@ elif menu == "Directorio":
                     conn_ec.cursor().execute("UPDATE contactos SET identificacion=%s, nombre=%s, tipo=%s, telefono=%s, email=%s, direccion=%s, ciudad=%s WHERE id=%s", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
                     conn_ec.commit()
                     conn_ec.close()
+                    st.cache_data.clear()
                     st.session_state['toast_msg'] = "Contacto actualizado."
                     st.session_state['toast_icon'] = "✅"
                     st.rerun()
@@ -858,6 +879,7 @@ elif menu == "Directorio":
                     conn_dc.cursor().execute("DELETE FROM contactos WHERE id=%s", (int(datos_c['id']),))
                     conn_dc.commit()
                     conn_dc.close()
+                    st.cache_data.clear()
                     st.rerun()
             st.dataframe(df_cont.drop(columns=['id']), use_container_width=True)
 
@@ -919,6 +941,7 @@ elif menu == "Administración":
                         conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
                         conn_m.commit()
                         conn_m.close()
+                        st.cache_data.clear()
                         st.session_state['toast_msg'] = "Perfil creado con éxito."
                         st.session_state['toast_icon'] = "👥"
                         st.rerun()
@@ -926,9 +949,7 @@ elif menu == "Administración":
                         st.error("Ya existe un usuario registrado con ese nombre en la base de datos.")
         with c_m2:
             st.subheader("✏️ Gestión de Credenciales")
-            conn = conectar_bd()
-            df_abg = pd.read_sql_query("SELECT id, nombre, email, telefono, rol FROM abogados", conn)
-            conn.close()
+            df_abg = cargar_abogados()
             if not df_abg.empty:
                 abg_editar = st.selectbox("Seleccionar usuario:", df_abg['nombre'].tolist())
                 datos_a = df_abg[df_abg['nombre'] == abg_editar].iloc[0]
@@ -945,6 +966,7 @@ elif menu == "Administración":
                         else: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
                         conn_ea.commit()
                         conn_ea.close()
+                        st.cache_data.clear()
                         st.session_state['toast_msg'] = "Modificaciones de seguridad guardadas."
                         st.session_state['toast_icon'] = "🔐"
                         st.rerun()
@@ -955,6 +977,7 @@ elif menu == "Administración":
                             conn_da.cursor().execute("DELETE FROM abogados WHERE id=%s", (int(datos_a['id']),))
                             conn_da.commit()
                             conn_da.close()
+                            st.cache_data.clear()
                             st.session_state['toast_msg'] = "Perfil eliminado."
                             st.session_state['toast_icon'] = "🗑️"
                             st.rerun()
