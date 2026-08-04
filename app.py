@@ -307,7 +307,7 @@ if menu == "Inicio":
         SELECT 
             (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
             (SELECT COUNT(*) FROM procesos WHERE estado='Terminado') as total_terminados,
-            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND natureza LIKE '%EJECUTIVO%') as sum_pretensiones,
+            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%') as sum_pretensiones,
             (SELECT COUNT(*) FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}') as venc_urgentes
     """
     df_kpis = pd.read_sql_query(query_kpis, conn)
