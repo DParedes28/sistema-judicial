@@ -5,6 +5,7 @@ import unicodedata
 from datetime import datetime, date, timedelta
 import holidays
 import io
+import json
 import plotly.express as px
 from streamlit_option_menu import option_menu
 import warnings
@@ -117,52 +118,78 @@ def obtener_nombres_demandantes(id_cliente_str, conn):
             nombres.append(i)
     return " / ".join(nombres) if nombres else "DEMANDANTE"
 
+def registrar_auditoria(conn, usuario, accion, tabla, registro_id, estado_anterior, estado_nuevo, datos_json):
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO auditoria (usuario, accion, tabla, registro_id, estado_anterior, estado_nuevo, datos_json) 
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (usuario, accion, tabla, str(registro_id), str(estado_anterior), str(estado_nuevo), datos_json)
+    )
+    conn.commit()
+
 def crear_tablas():
     conn = conectar_bd()
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (identificacion TEXT PRIMARY KEY, nombre TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS abogados (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, email TEXT, telefono TEXT, rol TEXT DEFAULT 'Abogado', password TEXT DEFAULT '1234')''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS procesos (
-            radicado_interno TEXT PRIMARY KEY, radicado_rama TEXT, naturaleza TEXT,
-            juzgado TEXT, etapa_actual TEXT, id_cliente TEXT, demandado TEXT, id_demandado TEXT, estado TEXT DEFAULT 'Activo',
-            pretensiones NUMERIC, medidas_cautelares TEXT, abogado_id INTEGER
-        )
-    ''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS actuaciones (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, etapa TEXT, descripcion TEXT, usuario TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS vencimientos (id SERIAL PRIMARY KEY, radicado_interno TEXT, titulo TEXT, fecha_vencimiento TEXT, estado TEXT DEFAULT 'Pendiente', observaciones TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
-    
-    # Migraciones seguras automáticas
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
-    cols_abgs = [col[0] for col in cursor.fetchall()]
-    if 'email' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN email TEXT")
-    if 'telefono' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN telefono TEXT")
-    if 'password' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
-    if 'rol' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN rol TEXT DEFAULT 'Abogado'")
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'procesos'")
-    cols_procesos = [col[0] for col in cursor.fetchall()]
-    if 'abogado_id' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN abogado_id INTEGER")
-    if 'pretensiones' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN pretensiones NUMERIC")
-    if 'medidas_cautelares' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN medidas_cautelares TEXT")
-    if 'estado' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN estado TEXT DEFAULT 'Activo'")
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contactos'")
-    cols_contactos = [col[0] for col in cursor.fetchall()]
-    if 'identificacion' not in cols_contactos: cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
-    cols_act = [col[0] for col in cursor.fetchall()]
-    if 'usuario' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (identificacion TEXT PRIMARY KEY, nombre TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS abogados (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, email TEXT, telefono TEXT, rol TEXT DEFAULT 'Abogado', password TEXT DEFAULT '1234')''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS procesos (
+                radicado_interno TEXT PRIMARY KEY, radicado_rama TEXT, naturaleza TEXT,
+                juzgado TEXT, etapa_actual TEXT, id_cliente TEXT, demandado TEXT, id_demandado TEXT, estado TEXT DEFAULT 'Activo',
+                pretensiones NUMERIC, medidas_cautelares TEXT, abogado_id INTEGER
+            )
+        ''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS actuaciones (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, etapa TEXT, descripcion TEXT, usuario TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS vencimientos (id SERIAL PRIMARY KEY, radicado_interno TEXT, titulo TEXT, fecha_vencimiento TEXT, estado TEXT DEFAULT 'Pendiente', observaciones TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
         
-    cursor.execute("SELECT COUNT(*) FROM abogados")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
-    
-    conn.commit()
-    conn.close()
+        # Tabla de Auditoría y Papelera con opción de Restauración
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS auditoria (
+                id SERIAL PRIMARY KEY,
+                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                usuario TEXT,
+                accion TEXT,
+                tabla TEXT,
+                registro_id TEXT,
+                estado_anterior TEXT,
+                estado_nuevo TEXT,
+                datos_json TEXT
+            )
+        ''')
+        
+        # Migraciones seguras automáticas
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
+        cols_abgs = [col[0] for col in cursor.fetchall()]
+        if 'email' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN email TEXT")
+        if 'telefono' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN telefono TEXT")
+        if 'password' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN password TEXT DEFAULT '1234'")
+        if 'rol' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN rol TEXT DEFAULT 'Abogado'")
+
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'procesos'")
+        cols_procesos = [col[0] for col in cursor.fetchall()]
+        if 'abogado_id' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN abogado_id INTEGER")
+        if 'pretensiones' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN pretensiones NUMERIC")
+        if 'medidas_cautelares' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN medidas_cautelares TEXT")
+        if 'estado' not in cols_procesos: cursor.execute("ALTER TABLE procesos ADD COLUMN estado TEXT DEFAULT 'Activo'")
+
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contactos'")
+        cols_contactos = [col[0] for col in cursor.fetchall()]
+        if 'identificacion' not in cols_contactos: cursor.execute("ALTER TABLE contactos ADD COLUMN identificacion TEXT")
+
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
+        cols_act = [col[0] for col in cursor.fetchall()]
+        if 'usuario' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
+            
+        cursor.execute("SELECT COUNT(*) FROM abogados")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", ("ADMINISTRADOR MAESTRO", "admin@firma.com", "3000000000", "Maestro", "1234"))
+        
+        conn.commit()
+    finally:
+        conn.close()
 
 try:
     crear_tablas()
@@ -259,10 +286,12 @@ def obtener_nombre_numero(n):
 
 def generar_radicado_interno():
     conn = conectar_bd()
-    cursor = conn.cursor()
-    cursor.execute("SELECT radicado_interno FROM procesos")
-    radicados = cursor.fetchall()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT radicado_interno FROM procesos")
+        radicados = cursor.fetchall()
+    finally:
+        conn.close()
     max_num = 0
     for rad in radicados:
         try:
@@ -320,24 +349,26 @@ if menu == "Inicio":
     st.write("Panorama operativo general de la práctica jurídica y agenda de términos.")
     
     conn = conectar_bd()
-    limite_urgente = str(date.today() + timedelta(days=5))
-    hoy_str = str(date.today())
-    
-    query_kpis = f"""
-        SELECT 
-            (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
-            (SELECT COUNT(*) FROM procesos WHERE estado='Terminado') as total_terminados,
-            (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%') as sum_pretensiones,
-            (SELECT COUNT(*) FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}') as venc_urgentes
-    """
-    df_kpis = pd.read_sql_query(query_kpis, conn)
-    total_activos = int(df_kpis.iloc[0]['total_activos'])
-    total_terminados = int(df_kpis.iloc[0]['total_terminados'])
-    sum_pretensiones = float(df_kpis.iloc[0]['sum_pretensiones'])
-    venc_urgentes_df = int(df_kpis.iloc[0]['venc_urgentes'])
-    
-    radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
-    conn.close()
+    try:
+        limite_urgente = str(date.today() + timedelta(days=5))
+        hoy_str = str(date.today())
+        
+        query_kpis = f"""
+            SELECT 
+                (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
+                (SELECT COUNT(*) FROM procesos WHERE estado='Terminado') as total_terminados,
+                (SELECT COALESCE(SUM(pretensiones), 0) FROM procesos WHERE estado='Activo' AND naturaleza LIKE '%EJECUTIVO%') as sum_pretensiones,
+                (SELECT COUNT(*) FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}') as venc_urgentes
+        """
+        df_kpis = pd.read_sql_query(query_kpis, conn)
+        total_activos = int(df_kpis.iloc[0]['total_activos'])
+        total_terminados = int(df_kpis.iloc[0]['total_terminados'])
+        sum_pretensiones = float(df_kpis.iloc[0]['sum_pretensiones'])
+        venc_urgentes_df = int(df_kpis.iloc[0]['venc_urgentes'])
+        
+        radar_df = pd.read_sql_query(f"SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= '{limite_urgente}' ORDER BY fecha_vencimiento ASC", conn)
+    finally:
+        conn.close()
     
     col_k1, col_k2, col_k3 = st.columns(3)
     with col_k1:
@@ -373,7 +404,7 @@ if menu == "Inicio":
 # SECCIÓN 1: REGISTRAR PROCESO
 # ==========================================
 elif menu == "Nuevo Proceso":
-    st.header("Registro de Nuevo Proceso")
+    st.header("Registro de Nuevo Proceso (Soporta Litisconsorcio)")
     
     with st.container(border=True):
         st.subheader("1. Identificación Básica")
@@ -398,7 +429,7 @@ elif menu == "Nuevo Proceso":
             juzgado_final = "PENDIENTE POR REPARTO"
     
     with st.container(border=True):
-        st.subheader("3. Partes Intervinientes")
+        st.subheader("3. Partes Intervinientes (Litisconsorcio)")
         st.caption("Los puntos o espacios en las cédulas serán eliminados automáticamente para mantener la base de datos estandarizada.")
         
         contactos_df = cargar_contactos_general()
@@ -479,8 +510,8 @@ elif menu == "Nuevo Proceso":
             st.error("⚠️ Debe ingresar o seleccionar al menos un Demandado/Contraparte.")
         else:
             conn = conectar_bd()
-            cursor = conn.cursor()
             try:
+                cursor = conn.cursor()
                 nombres_dem, ids_dem = [], []
                 for c in clientes_existentes:
                     i, n = c.split(" - ", 1)
@@ -518,6 +549,10 @@ elif menu == "Nuevo Proceso":
                 if "EJECUTIVO" in naturaleza:
                     fecha_alarma = sumar_dias_habiles(fecha_hoy, 30)
                     cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento) VALUES (%s, %s, %s)", (radicado_interno, "Radicación", fecha_alarma))
+
+                # Registrar en Auditoría
+                datos_reg = {"radicado_interno": radicado_interno, "naturaleza": naturaleza, "juzgado": juzgado_final, "demandado": nombre_demandado_final}
+                registrar_auditoria(conn, usuario_seleccionado, "CREACION", "procesos", radicado_interno, "", "Creado", json.dumps(datos_reg))
 
                 conn.commit() 
                 st.session_state.num_dem_nuevos = 0
@@ -572,8 +607,10 @@ elif menu == "Expedientes":
                 except: val_pret_ficha = 0.0
                 
                 conn_n = conectar_bd()
-                nombre_demandante_str = obtener_nombres_demandantes(proceso_fila['id_cliente'], conn_n)
-                conn_n.close()
+                try:
+                    nombre_demandante_str = obtener_nombres_demandantes(proceso_fila['id_cliente'], conn_n)
+                finally:
+                    conn_n.close()
                 
                 st.markdown("---")
                 with st.container(border=True):
@@ -622,29 +659,57 @@ elif menu == "Expedientes":
                                 juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}" if actualizar_juz else proceso_fila['juzgado']
                                 rad_guardar = n_rad if n_rad else "EN REPARTO"
                                 
+                                estado_anterior_dict = dict(proceso_fila)
+                                estado_nuevo_dict = {"naturaleza": n_nat, "demandado": n_dem, "radicado_rama": rad_guardar, "juzgado": juz_guardar, "pretensiones": n_pret, "medidas_cautelares": n_med, "estado": n_estado}
+
                                 conn_up = conectar_bd()
-                                conn_up.cursor().execute("""UPDATE procesos SET naturaleza=%s, demandado=%s, radicado_rama=%s, juzgado=%s, pretensiones=%s, medidas_cautelares=%s, abogado_id=%s, estado=%s WHERE radicado_interno=%s""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
-                                conn_up.commit()
-                                conn_up.close()
+                                try:
+                                    conn_up.cursor().execute("""UPDATE procesos SET naturaleza=%s, demandado=%s, radicado_rama=%s, juzgado=%s, pretensiones=%s, medidas_cautelares=%s, abogado_id=%s, estado=%s WHERE radicado_interno=%s""", (n_nat, n_dem, rad_guardar, juz_guardar, n_pret, n_med, int(n_abg_id), n_estado, radicado_seleccionado))
+                                    registrar_auditoria(conn_up, usuario_seleccionado, "MODIFICACION", "procesos", radicado_seleccionado, json.dumps(estado_anterior_dict, default=str), json.dumps(estado_nuevo_dict), json.dumps(estado_nuevo_dict))
+                                    conn_up.commit()
+                                finally:
+                                    conn_up.close()
+                                    
                                 st.cache_data.clear()
                                 st.session_state['toast_msg'] = "Expediente actualizado exitosamente."
                                 st.session_state['toast_icon'] = "✅"
                                 st.rerun()
 
-                    with st.expander("🚨 Zona de Riesgo: Eliminar Expediente"):
-                        st.warning("Esta acción eliminará permanentemente el expediente en la nube.")
-                        if st.button("🗑️ Eliminar Expediente Completamente"):
-                            conn_del = conectar_bd()
-                            conn_del.cursor().execute("DELETE FROM procesos WHERE radicado_interno=%s", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM actuaciones WHERE radicado_interno=%s", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM vencimientos WHERE radicado_interno=%s", (radicado_seleccionado,))
-                            conn_del.cursor().execute("DELETE FROM gastos WHERE radicado_interno=%s", (radicado_seleccionado,))
-                            conn_del.commit()
-                            conn_del.close()
-                            st.cache_data.clear()
-                            st.session_state['toast_msg'] = f"Expediente {radicado_seleccionado} eliminado."
-                            st.session_state['toast_icon'] = "🗑️"
-                            st.rerun()
+                    # ZONA DE RIESGO: ELIMINACIÓN RESTRINGIDA AL ROL MAESTRO
+                    if usuario_rol == "Maestro":
+                        with st.expander("🚨 Zona de Riesgo: Eliminar Expediente (Exclusivo Maestro)"):
+                            st.warning("Esta acción eliminará permanentemente el expediente y enviará una copia de respaldo estructurada a la Papelera de Auditoría.")
+                            if st.button("🗑️ Eliminar Expediente Completamente"):
+                                conn_del = conectar_bd()
+                                try:
+                                    cursor_del = conn_del.cursor()
+                                    
+                                    # Mapeo universal dinámico para copia de seguridad
+                                    cursor_del.execute("SELECT * FROM procesos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                                    row_proc = cursor_del.fetchone()
+                                    if row_proc:
+                                        cols = [desc[0] for desc in cursor_del.description]
+                                        datos_respaldo_dict = dict(zip(cols, row_proc))
+                                        datos_respaldo = json.dumps(datos_respaldo_dict, default=str)
+                                    else:
+                                        datos_respaldo = "{}"
+                                    
+                                    cursor_del.execute("DELETE FROM procesos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                                    cursor_del.execute("DELETE FROM actuaciones WHERE radicado_interno=%s", (radicado_seleccionado,))
+                                    cursor_del.execute("DELETE FROM vencimientos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                                    cursor_del.execute("DELETE FROM gastos WHERE radicado_interno=%s", (radicado_seleccionado,))
+                                    
+                                    registrar_auditoria(conn_del, usuario_seleccionado, "ELIMINACION", "procesos", radicado_seleccionado, "Activo", "Eliminado", datos_respaldo)
+                                    conn_del.commit()
+                                finally:
+                                    conn_del.close()
+                                    
+                                st.cache_data.clear()
+                                st.session_state['toast_msg'] = f"Expediente {radicado_seleccionado} eliminado y respaldado."
+                                st.session_state['toast_icon'] = "🗑️"
+                                st.rerun()
+                    else:
+                        st.info("🔒 Los perfiles de Abogado no tienen autorización para eliminar expedientes. Contacte al Administrador Maestro si requiere esta acción.")
 
                     st.markdown("---")
                     col_a1, col_a2 = st.columns([1, 1.5])
@@ -666,21 +731,24 @@ elif menu == "Expedientes":
                         
                         if st.button("💾 Guardar Actuación", use_container_width=True, key=f"btn_act_{radicado_seleccionado}"):
                             conn_ins = conectar_bd()
-                            cursor = conn_ins.cursor()
-                            
-                            if sub_act != "Observación":
-                                cursor.execute("UPDATE vencimientos SET estado='Completado' WHERE radicado_interno=%s AND estado='Pendiente'", (radicado_seleccionado,))
-                            
-                            detalle_completo = f"{sub_act}: {d_act}" if d_act else sub_act
-                            cursor.execute("INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)", (radicado_seleccionado, str(f_act), e_act, detalle_completo, usuario_seleccionado))
-                            cursor.execute("UPDATE procesos SET etapa_actual=%s WHERE radicado_interno=%s", (e_act, radicado_seleccionado))
-                            
-                            if dias_alarma > 0:
-                                fecha_alarma_principal = sumar_dias_habiles(f_act, dias_alarma)
-                                cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, sub_act, fecha_alarma_principal, d_act))
-                            
-                            conn_ins.commit()
-                            conn_ins.close()
+                            try:
+                                cursor = conn_ins.cursor()
+                                if sub_act != "Observación":
+                                    cursor.execute("UPDATE vencimientos SET estado='Completado' WHERE radicado_interno=%s AND estado='Pendiente'", (radicado_seleccionado,))
+                                
+                                detalle_completo = f"{sub_act}: {d_act}" if d_act else sub_act
+                                cursor.execute("INSERT INTO actuaciones (radicado_interno, fecha, etapa, descripcion, usuario) VALUES (%s, %s, %s, %s, %s)", (radicado_seleccionado, str(f_act), e_act, detalle_completo, usuario_seleccionado))
+                                cursor.execute("UPDATE procesos SET etapa_actual=%s WHERE radicado_interno=%s", (e_act, radicado_seleccionado))
+                                
+                                if dias_alarma > 0:
+                                    fecha_alarma_principal = sumar_dias_habiles(f_act, dias_alarma)
+                                    cursor.execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, sub_act, fecha_alarma_principal, d_act))
+                                
+                                registrar_auditoria(conn_ins, usuario_seleccionado, "CREACION", "actuaciones", radicado_seleccionado, "", e_act, json.dumps({"etapa": e_act, "desc": detalle_completo}))
+                                conn_ins.commit()
+                            finally:
+                                conn_ins.close()
+                                
                             st.cache_data.clear()
                             st.session_state['toast_msg'] = "Actuación registrada."
                             st.session_state['toast_icon'] = "📝"
@@ -689,8 +757,11 @@ elif menu == "Expedientes":
                     with col_a2:
                         st.markdown("**📜 Historial de Actuaciones**")
                         conn_hist = conectar_bd()
-                        hist_df = pd.read_sql_query(f"SELECT * FROM actuaciones WHERE radicado_interno='{radicado_seleccionado}' ORDER BY fecha DESC", conn_hist)
-                        conn_hist.close()
+                        try:
+                            hist_df = pd.read_sql_query(f"SELECT * FROM actuaciones WHERE radicado_interno='{radicado_seleccionado}' ORDER BY fecha DESC", conn_hist)
+                        finally:
+                            conn_hist.close()
+                            
                         for idx, r in hist_df.iterrows():
                             autor_nota = f" (Por: {r['usuario']})" if 'usuario' in r and pd.notna(r['usuario']) and r['usuario'] != "" else ""
                             with st.expander(f"{r['fecha']} | {r['etapa']}{autor_nota}"):
@@ -701,18 +772,27 @@ elif menu == "Expedientes":
                                     cb1, cb2 = st.columns(2)
                                     if cb1.form_submit_button("💾 Modificar"):
                                         conn_u = conectar_bd()
-                                        conn_u.cursor().execute("UPDATE actuaciones SET fecha=%s, etapa=%s, descripcion=%s WHERE id=%s", (n_f, n_e, n_d, r['id']))
-                                        conn_u.commit()
-                                        conn_u.close()
+                                        try:
+                                            conn_u.cursor().execute("UPDATE actuaciones SET fecha=%s, etapa=%s, descripcion=%s WHERE id=%s", (n_f, n_e, n_d, r['id']))
+                                            registrar_auditoria(conn_u, usuario_seleccionado, "MODIFICACION", "actuaciones", r['id'], r['descripcion'], n_d, json.dumps({"fecha": n_f, "etapa": n_e, "desc": n_d}))
+                                            conn_u.commit()
+                                        finally:
+                                            conn_u.close()
                                         st.cache_data.clear()
                                         st.rerun()
                                     if cb2.form_submit_button("🗑️ Eliminar"):
-                                        conn_d = conectar_bd()
-                                        conn_d.cursor().execute("DELETE FROM actuaciones WHERE id=%s", (r['id'],))
-                                        conn_d.commit()
-                                        conn_d.close()
-                                        st.cache_data.clear()
-                                        st.rerun()
+                                        if usuario_rol == "Maestro":
+                                            conn_d = conectar_bd()
+                                            try:
+                                                conn_d.cursor().execute("DELETE FROM actuaciones WHERE id=%s", (r['id'],))
+                                                registrar_auditoria(conn_d, usuario_seleccionado, "ELIMINACION", "actuaciones", r['id'], r['descripcion'], "Eliminado", json.dumps(dict(r), default=str))
+                                                conn_d.commit()
+                                            finally:
+                                                conn_d.close()
+                                            st.cache_data.clear()
+                                            st.rerun()
+                                        else:
+                                            st.error("🔒 Solo el Administrador Maestro puede eliminar actuaciones.")
                     
                     st.markdown("---")
                     col_g1, col_g2 = st.columns([1, 1.5])
@@ -726,9 +806,12 @@ elif menu == "Expedientes":
                             if st.form_submit_button("💾 Registrar Gasto", use_container_width=True):
                                 if c_gasto and v_gasto > 0:
                                     conn_g = conectar_bd()
-                                    conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
-                                    conn_g.commit()
-                                    conn_g.close()
+                                    try:
+                                        conn_g.cursor().execute("INSERT INTO gastos (radicado_interno, fecha, concepto, valor) VALUES (%s, %s, %s, %s)", (radicado_seleccionado, str(f_gasto), c_gasto, v_gasto))
+                                        registrar_auditoria(conn_g, usuario_seleccionado, "CREACION", "gastos", radicado_seleccionado, "", str(v_gasto), json.dumps({"concepto": c_gasto, "valor": v_gasto}))
+                                        conn_g.commit()
+                                    finally:
+                                        conn_g.close()
                                     st.cache_data.clear()
                                     st.session_state['toast_msg'] = "Gasto registrado."
                                     st.session_state['toast_icon'] = "💸"
@@ -737,8 +820,10 @@ elif menu == "Expedientes":
                     with col_g2:
                         st.markdown("**📊 Historial Financiero del Proceso**")
                         conn_hg = conectar_bd()
-                        gastos_df = pd.read_sql_query(f"SELECT * FROM gastos WHERE radicado_interno='{radicado_seleccionado}' ORDER BY fecha DESC", conn_hg)
-                        conn_hg.close()
+                        try:
+                            gastos_df = pd.read_sql_query(f"SELECT * FROM gastos WHERE radicado_interno='{radicado_seleccionado}' ORDER BY fecha DESC", conn_hg)
+                        finally:
+                            conn_hg.close()
                         
                         if not gastos_df.empty:
                             total_gastos = gastos_df['valor'].sum()
@@ -754,18 +839,27 @@ elif menu == "Expedientes":
                                         c_bg1, c_bg2 = st.columns(2)
                                         if c_bg1.form_submit_button("💾 Modificar"):
                                             conn_ug = conectar_bd()
-                                            conn_ug.cursor().execute("UPDATE gastos SET fecha=%s, concepto=%s, valor=%s WHERE id=%s", (n_fg, n_cg, n_vg, r['id']))
-                                            conn_ug.commit()
-                                            conn_ug.close()
+                                            try:
+                                                conn_ug.cursor().execute("UPDATE gastos SET fecha=%s, concepto=%s, valor=%s WHERE id=%s", (n_fg, n_cg, n_vg, r['id']))
+                                                registrar_auditoria(conn_ug, usuario_seleccionado, "MODIFICACION", "gastos", r['id'], str(r['valor']), str(n_vg), json.dumps({"concepto": n_cg, "valor": n_vg}))
+                                                conn_ug.commit()
+                                            finally:
+                                                conn_ug.close()
                                             st.cache_data.clear()
                                             st.rerun()
                                         if c_bg2.form_submit_button("🗑️ Eliminar"):
-                                            conn_dg = conectar_bd()
-                                            conn_dg.cursor().execute("DELETE FROM gastos WHERE id=%s", (r['id'],))
-                                            conn_dg.commit()
-                                            conn_dg.close()
-                                            st.cache_data.clear()
-                                            st.rerun()
+                                            if usuario_rol == "Maestro":
+                                                conn_dg = conectar_bd()
+                                                try:
+                                                    conn_dg.cursor().execute("DELETE FROM gastos WHERE id=%s", (r['id'],))
+                                                    registrar_auditoria(conn_dg, usuario_seleccionado, "ELIMINACION", "gastos", r['id'], str(r['valor']), "Eliminado", json.dumps(dict(r), default=str))
+                                                    conn_dg.commit()
+                                                finally:
+                                                    conn_dg.close()
+                                                st.cache_data.clear()
+                                                st.rerun()
+                                            else:
+                                                st.error("🔒 Solo el Administrador Maestro puede eliminar gastos.")
         else:
             st.warning("No se encontraron expedientes.")
 
@@ -779,8 +873,11 @@ elif menu == "Vencimientos":
         st.subheader("📌 Programar Término Manual")
         with st.form("form_venc"):
             conn = conectar_bd()
-            df_proc = pd.read_sql_query("SELECT radicado_interno FROM procesos", conn)
-            conn.close()
+            try:
+                df_proc = pd.read_sql_query("SELECT radicado_interno FROM procesos", conn)
+            finally:
+                conn.close()
+            
             rad_sel = st.selectbox("Asociar a Proceso", df_proc['radicado_interno'].tolist() if not df_proc.empty else ["GENERAL"])
             tit_venc = st.text_input("Descripción del Término")
             f_venc = st.date_input("Fecha Límite")
@@ -788,9 +885,12 @@ elif menu == "Vencimientos":
             if st.form_submit_button("💾 Agendar Vencimiento"):
                 if tit_venc:
                     conn_v = conectar_bd()
-                    conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (rad_sel, tit_venc, str(f_venc), obs_venc))
-                    conn_v.commit()
-                    conn_v.close()
+                    try:
+                        conn_v.cursor().execute("INSERT INTO vencimientos (radicado_interno, titulo, fecha_vencimiento, observaciones) VALUES (%s, %s, %s, %s)", (rad_sel, tit_venc, str(f_venc), obs_venc))
+                        registrar_auditoria(conn_v, usuario_seleccionado, "CREACION", "vencimientos", rad_sel, "", str(f_venc), json.dumps({"titulo": tit_venc, "fecha": str(f_venc)}))
+                        conn_v.commit()
+                    finally:
+                        conn_v.close()
                     st.cache_data.clear()
                     st.session_state['toast_msg'] = "Término agendado con éxito."
                     st.session_state['toast_icon'] = "⏰"
@@ -799,8 +899,10 @@ elif menu == "Vencimientos":
     with c_ag2:
         st.subheader("🚨 Alarmas Pendientes")
         conn = conectar_bd()
-        venc_df = pd.read_sql_query("SELECT * FROM vencimientos ORDER BY fecha_vencimiento ASC", conn)
-        conn.close()
+        try:
+            venc_df = pd.read_sql_query("SELECT * FROM vencimientos ORDER BY fecha_vencimiento ASC", conn)
+        finally:
+            conn.close()
         
         venc_pendientes = venc_df[venc_df['estado'] == 'Pendiente']
         if not venc_pendientes.empty:
@@ -813,18 +915,27 @@ elif menu == "Vencimientos":
                         cv1, cv2 = st.columns(2)
                         if cv1.form_submit_button("💾 Actualizar"):
                             conn_uv = conectar_bd()
-                            conn_uv.cursor().execute("UPDATE vencimientos SET titulo=%s, fecha_vencimiento=%s, estado=%s WHERE id=%s", (u_tit, u_fec, u_est, row['id']))
-                            conn_uv.commit()
-                            conn_uv.close()
+                            try:
+                                conn_uv.cursor().execute("UPDATE vencimientos SET titulo=%s, fecha_vencimiento=%s, estado=%s WHERE id=%s", (u_tit, u_fec, u_est, row['id']))
+                                registrar_auditoria(conn_uv, usuario_seleccionado, "MODIFICACION", "vencimientos", row['id'], row['estado'], u_est, json.dumps({"titulo": u_tit, "estado": u_est}))
+                                conn_uv.commit()
+                            finally:
+                                conn_uv.close()
                             st.cache_data.clear()
                             st.rerun()
                         if cv2.form_submit_button("🗑️ Eliminar"):
-                            conn_dv = conectar_bd()
-                            conn_dv.cursor().execute("DELETE FROM vencimientos WHERE id=%s", (row['id'],))
-                            conn_dv.commit()
-                            conn_dv.close()
-                            st.cache_data.clear()
-                            st.rerun()
+                            if usuario_rol == "Maestro":
+                                conn_dv = conectar_bd()
+                                try:
+                                    conn_dv.cursor().execute("DELETE FROM vencimientos WHERE id=%s", (row['id'],))
+                                    registrar_auditoria(conn_dv, usuario_seleccionado, "ELIMINACION", "vencimientos", row['id'], row['estado'], "Eliminado", json.dumps(dict(row), default=str))
+                                    conn_dv.commit()
+                                finally:
+                                    conn_dv.close()
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("🔒 Solo el Administrador Maestro puede eliminar vencimientos.")
         else:
             st.success("✅ Agenda limpia.")
 
@@ -849,9 +960,12 @@ elif menu == "Directorio":
                 if n_c:
                     id_c_limpio = limpiar_identificacion(id_c)
                     conn_c = conectar_bd()
-                    conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (%s, %s, %s, %s, %s, %s, %s)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
-                    conn_c.commit()
-                    conn_c.close()
+                    try:
+                        conn_c.cursor().execute("INSERT INTO contactos (identificacion, nombre, tipo, telefono, email, direccion, ciudad) VALUES (%s, %s, %s, %s, %s, %s, %s)", (id_c_limpio, n_c, tipo_c, t_c, e_c, d_c, ciu_c))
+                        registrar_auditoria(conn_c, usuario_seleccionado, "CREACION", "contactos", id_c_limpio, "", n_c, json.dumps({"nombre": n_c, "tipo": tipo_c}))
+                        conn_c.commit()
+                    finally:
+                        conn_c.close()
                     st.cache_data.clear()
                     st.session_state['toast_msg'] = "Contacto guardado en Neon."
                     st.session_state['toast_icon'] = "📞"
@@ -881,20 +995,29 @@ elif menu == "Directorio":
                 if ce1.form_submit_button("💾 Guardar Cambios"):
                     e_id_c_limpio = limpiar_identificacion(e_id_c)
                     conn_ec = conectar_bd()
-                    conn_ec.cursor().execute("UPDATE contactos SET identificacion=%s, nombre=%s, tipo=%s, telefono=%s, email=%s, direccion=%s, ciudad=%s WHERE id=%s", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
-                    conn_ec.commit()
-                    conn_ec.close()
+                    try:
+                        conn_ec.cursor().execute("UPDATE contactos SET identificacion=%s, nombre=%s, tipo=%s, telefono=%s, email=%s, direccion=%s, ciudad=%s WHERE id=%s", (e_id_c_limpio, e_n_c, e_tipo_c, e_t_c, e_em_c, e_d_c, e_ciu_c, int(datos_c['id'])))
+                        registrar_auditoria(conn_ec, usuario_seleccionado, "MODIFICACION", "contactos", datos_c['id'], datos_c['nombre'], e_n_c, json.dumps({"nombre": e_n_c}))
+                        conn_ec.commit()
+                    finally:
+                        conn_ec.close()
                     st.cache_data.clear()
                     st.session_state['toast_msg'] = "Contacto actualizado."
                     st.session_state['toast_icon'] = "✅"
                     st.rerun()
                 if ce2.form_submit_button("🗑️ Eliminar"):
-                    conn_dc = conectar_bd()
-                    conn_dc.cursor().execute("DELETE FROM contactos WHERE id=%s", (int(datos_c['id']),))
-                    conn_dc.commit()
-                    conn_dc.close()
-                    st.cache_data.clear()
-                    st.rerun()
+                    if usuario_rol == "Maestro":
+                        conn_dc = conectar_bd()
+                        try:
+                            conn_dc.cursor().execute("DELETE FROM contactos WHERE id=%s", (int(datos_c['id']),))
+                            registrar_auditoria(conn_dc, usuario_seleccionado, "ELIMINACION", "contactos", datos_c['id'], datos_c['nombre'], "Eliminado", json.dumps(dict(datos_c), default=str))
+                            conn_dc.commit()
+                        finally:
+                            conn_dc.close()
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("🔒 Solo el Administrador Maestro puede eliminar contactos.")
             st.dataframe(df_cont.drop(columns=['id']), use_container_width=True)
 
 # ==========================================
@@ -903,8 +1026,11 @@ elif menu == "Directorio":
 elif menu == "Informes":
     st.header("Informes y Exportación de Datos")
     conn = conectar_bd()
-    total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
-    conn.close()
+    try:
+        total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
+    finally:
+        conn.close()
+        
     st.markdown(f"<div class='metric-card' style='max-width:300px;margin-bottom:25px;'><h2 style='color:#0a84ff;margin:0;'>📁 {total_p}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos en Base de Datos</p></div>", unsafe_allow_html=True)
     
     st.markdown("---")
@@ -912,12 +1038,14 @@ elif menu == "Informes":
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         conn_rep = conectar_bd()
-        df_proc_r = pd.read_sql_query("SELECT * FROM procesos", conn_rep)
-        df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC", conn_rep)
-        df_venc_r = pd.read_sql_query("SELECT * FROM vencimientos", conn_rep)
-        df_gas_r = pd.read_sql_query("SELECT * FROM gastos", conn_rep)
-        df_cont_r = pd.read_sql_query("SELECT * FROM contactos", conn_rep)
-        conn_rep.close()
+        try:
+            df_proc_r = pd.read_sql_query("SELECT * FROM procesos", conn_rep)
+            df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC", conn_rep)
+            df_venc_r = pd.read_sql_query("SELECT * FROM vencimientos", conn_rep)
+            df_gas_r = pd.read_sql_query("SELECT * FROM gastos", conn_rep)
+            df_cont_r = pd.read_sql_query("SELECT * FROM contactos", conn_rep)
+        finally:
+            conn_rep.close()
         
         actuaciones_consolidadas = {}
         for rad in df_proc_r['radicado_interno']:
@@ -935,7 +1063,7 @@ elif menu == "Informes":
     st.download_button(label="📥 Descargar Reporte Ejecutivo (.xlsx)", data=output.getvalue(), file_name=f"informe_judicial_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 # ==========================================
-# SECCIÓN 6: ADMINISTRACIÓN 
+# SECCIÓN 6: ADMINISTRACIÓN Y AUDITORÍA
 # ==========================================
 elif menu == "Administración":
     st.header("Administración de Perfiles y Seguridad")
@@ -952,9 +1080,12 @@ elif menu == "Administración":
                 if st.form_submit_button("💾 Crear Perfil"):
                     try:
                         conn_m = conectar_bd()
-                        conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
-                        conn_m.commit()
-                        conn_m.close()
+                        try:
+                            conn_m.cursor().execute("INSERT INTO abogados (nombre, email, telefono, rol, password) VALUES (%s, %s, %s, %s, %s)", (n_abg, e_abg, t_abg, r_abg, p_abg if p_abg else "1234"))
+                            registrar_auditoria(conn_m, usuario_seleccionado, "CREACION", "abogados", n_abg, "", r_abg, json.dumps({"nombre": n_abg, "rol": r_abg}))
+                            conn_m.commit()
+                        finally:
+                            conn_m.close()
                         st.cache_data.clear()
                         st.session_state['toast_msg'] = "Perfil creado con éxito."
                         st.session_state['toast_icon'] = "👥"
@@ -976,10 +1107,13 @@ elif menu == "Administración":
                     c_b1, c_b2 = st.columns(2)
                     if c_b1.form_submit_button("💾 Guardar Cambios"):
                         conn_ea = conectar_bd()
-                        if ed_p: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s, password=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, ed_p, int(datos_a['id'])))
-                        else: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
-                        conn_ea.commit()
-                        conn_ea.close()
+                        try:
+                            if ed_p: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s, password=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, ed_p, int(datos_a['id'])))
+                            else: conn_ea.cursor().execute("UPDATE abogados SET nombre=%s, email=%s, telefono=%s, rol=%s WHERE id=%s", (ed_n, ed_e, ed_t, ed_r, int(datos_a['id'])))
+                            registrar_auditoria(conn_ea, usuario_seleccionado, "MODIFICACION", "abogados", datos_a['id'], datos_a['rol'], ed_r, json.dumps({"nombre": ed_n, "rol": ed_r}))
+                            conn_ea.commit()
+                        finally:
+                            conn_ea.close()
                         st.cache_data.clear()
                         st.session_state['toast_msg'] = "Modificaciones de seguridad guardadas."
                         st.session_state['toast_icon'] = "🔐"
@@ -988,13 +1122,72 @@ elif menu == "Administración":
                         if abg_editar == "ADMINISTRADOR MAESTRO": st.error("No es posible eliminar al administrador principal.")
                         else:
                             conn_da = conectar_bd()
-                            conn_da.cursor().execute("DELETE FROM abogados WHERE id=%s", (int(datos_a['id']),))
-                            conn_da.commit()
-                            conn_da.close()
+                            try:
+                                conn_da.cursor().execute("DELETE FROM abogados WHERE id=%s", (int(datos_a['id']),))
+                                registrar_auditoria(conn_da, usuario_seleccionado, "ELIMINACION", "abogados", datos_a['id'], datos_a['nombre'], "Eliminado", json.dumps(dict(datos_a), default=str))
+                                conn_da.commit()
+                            finally:
+                                conn_da.close()
                             st.cache_data.clear()
                             st.session_state['toast_msg'] = "Perfil eliminado."
                             st.session_state['toast_icon'] = "🗑️"
                             st.rerun()
             st.dataframe(df_abg, use_container_width=True)
+            
+        st.markdown("---")
+        st.subheader("📜 Log de Auditoría y Restauración Dinámica")
+        conn_aud = conectar_bd()
+        try:
+            df_aud = pd.read_sql_query("SELECT * FROM auditoria ORDER BY fecha DESC LIMIT 100", conn_aud)
+        finally:
+            conn_aud.close()
+        
+        if not df_aud.empty:
+            st.dataframe(df_aud, use_container_width=True, hide_index=True)
+            
+            st.markdown("### ♻️ Bóveda de Restauración (Universal)")
+            st.write("Puedes restaurar expedientes, actuaciones, gastos, contactos o vencimientos eliminados.")
+            eliminados_df = df_aud[df_aud['accion'] == 'ELIMINACION']
+            
+            if not eliminados_df.empty:
+                opciones_restaurar = [f"ID Log: {r['id']} | Tabla: {r['tabla']} | Registro ID: {r['registro_id']} | Fecha: {r['fecha']}" for _, r in eliminados_df.iterrows()]
+                log_sel = st.selectbox("Seleccione el registro eliminado que desea recuperar:", opciones_restaurar)
+                
+                if st.button("🔄 Ejecutar Restauración Segura"):
+                    id_log_sel = int(log_sel.split("|")[0].replace("ID Log:", "").strip())
+                    row_log = eliminados_df[eliminados_df['id'] == id_log_sel].iloc[0]
+                    tabla_afectada = row_log['tabla']
+                    datos_str = row_log['datos_json']
+                    
+                    try:
+                        datos_dict = json.loads(datos_str)
+                        if isinstance(datos_dict, dict) and datos_dict:
+                            conn_res = conectar_bd()
+                            try:
+                                cur_res = conn_res.cursor()
+                                
+                                # Construcción dinámica del query para inyectar los datos en CUALQUIER tabla
+                                columnas = ', '.join(datos_dict.keys())
+                                placeholders = ', '.join(['%s'] * len(datos_dict))
+                                valores = tuple(datos_dict.values())
+                                
+                                query_insercion = f"INSERT INTO {tabla_afectada} ({columnas}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+                                cur_res.execute(query_insercion, valores)
+                                
+                                registrar_auditoria(conn_res, usuario_seleccionado, "RESTAURACION", tabla_afectada, row_log['registro_id'], "Eliminado", "Restaurado", datos_str)
+                                conn_res.commit()
+                                
+                                st.cache_data.clear()
+                                st.success(f"✅ ¡Restauración exitosa! El registro volvió a la tabla '{tabla_afectada}'.")
+                            finally:
+                                conn_res.close()
+                        else:
+                            st.error("⚠️ El formato del respaldo no contiene campos válidos para procesar.")
+                    except Exception as ex:
+                        st.error(f"Error técnico durante la restauración: {ex}")
+            else:
+                st.info("No hay registros eliminados en la papelera en este momento.")
+        else:
+            st.info("El historial de auditoría está vacío.")
     else:
-        st.warning("Acceso restringido. Se requiere rol de Administrador Maestro.")
+        st.warning("🔒 Acceso denegado. Se requiere credencial de Administrador Maestro para acceder a la configuración global y papelera.")
