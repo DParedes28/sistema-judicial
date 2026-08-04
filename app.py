@@ -100,26 +100,27 @@ st.markdown("""
         border-right: 1px solid #1c1c1e;
     }
     
- /* --- SUPER MENÚ LATERAL (BOTONES MÁS GRANDES Y SEPARADOS) --- */
-    div[data-testid="stSidebar"] .stRadio label {
-        padding: 12px 15px !important;
+/* --- SUPER MENÚ LATERAL (ESTILO TARJETAS) --- */
+    div[data-testid="stSidebar"] div[role="radiogroup"] > label {
+        padding: 15px 18px !important;
         margin-bottom: 12px !important;
-        background-color: #111111 !important;
-        border-radius: 10px !important;
-        border: 1px solid #2c2c2e !important;
-        cursor: pointer !important;
-        transition: all 0.2s ease-in-out !important;
-    }
-
-    div[data-testid="stSidebar"] .stRadio label:hover {
         background-color: #1c1c1e !important;
-        border-color: #0a84ff !important;
-        transform: scale(1.02);
+        border: 1px solid #2c2c2e !important;
+        border-radius: 12px !important;
+        width: 100% !important;
+        transition: all 0.2s ease-in-out !important;
+        cursor: pointer !important;
     }
 
-    div[data-testid="stSidebar"] .stRadio label p, 
-    div[data-testid="stSidebar"] .stRadio label span {
-        font-size: 17px !important;
+    div[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        background-color: #2c2c2e !important;
+        border-color: #0a84ff !important;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+
+    div[data-testid="stSidebar"] div[role="radiogroup"] p {
+        font-size: 18px !important;
         font-weight: 600 !important;
         color: #f2f2f7 !important;
         margin-left: 5px !important;
