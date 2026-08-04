@@ -358,7 +358,7 @@ if menu == "🏠 Inicio":
     
     with c_grafico:
         st.subheader("Balance de Expedientes")
-        if total_activos == 0 y total_terminados == 0:
+        if total_activos == 0 and total_terminados == 0:
             st.info("No hay procesos registrados para graficar.")
         else:
             # Gráfico de Plotly Premium Dark
