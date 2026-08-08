@@ -160,7 +160,7 @@ def crear_tablas():
             )
         ''')
         
-        # Migraciones seguras automáticas
+        # Migraciones seguras automáticas (incluyendo soporte para IA y revisión de robot)
         cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'abogados'")
         cols_abgs = [col[0] for col in cursor.fetchall()]
         if 'email' not in cols_abgs: cursor.execute("ALTER TABLE abogados ADD COLUMN email TEXT")
@@ -182,6 +182,9 @@ def crear_tablas():
         cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'actuaciones'")
         cols_act = [col[0] for col in cursor.fetchall()]
         if 'usuario' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN usuario TEXT")
+        if 'tipificacion_sugerida' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN tipificacion_sugerida TEXT")
+        if 'tipificacion_definitiva' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN tipificacion_definitiva TEXT")
+        if 'revisado' not in cols_act: cursor.execute("ALTER TABLE actuaciones ADD COLUMN revisado BOOLEAN DEFAULT FALSE")
             
         cursor.execute("SELECT COUNT(*) FROM abogados")
         if cursor.fetchone()[0] == 0:
@@ -264,8 +267,8 @@ else:
     with st.sidebar:
         menu = option_menu(
             menu_title=None,
-            options=["Inicio", "Nuevo Proceso", "Expedientes", "Vencimientos", "Directorio", "Informes", "Administración"],
-            icons=["house", "file-earmark-plus", "folder2-open", "alarm", "book", "graph-up", "people"],
+            options=["Inicio", "Bandeja de Estados", "Nuevo Proceso", "Expedientes", "Vencimientos", "Directorio", "Informes", "Administración"],
+            icons=["house", "inbox", "file-earmark-plus", "folder2-open", "alarm", "book", "graph-up", "people"],
             default_index=0,
             styles={
                 "container": {"padding": "0!important", "background-color": "transparent"},
@@ -414,6 +417,93 @@ if menu == "Inicio":
                 st.warning(f"**[{estado_alerta}]** | Expediente: **{r['radicado_interno']}** | Tarea: **{r['titulo']}** | Límite: **{r['fecha_vencimiento']}**")
         else:
             st.success("✅ Agenda limpia. No hay términos críticos para los próximos 5 días.")
+
+# ==========================================
+# SECCIÓN: BANDEJA DE ESTADOS (ROBOT IA)
+# ==========================================
+elif menu == "Bandeja de Estados":
+    st.header("📌 Bandeja de Entrada de Novedades Judiciales")
+    st.markdown("Revisa aquí las últimas actuaciones detectadas automáticamente por el robot, valida la sugerencia de la IA y marca como revisado.")
+    
+    conn = conectar_bd()
+    try:
+        query_bandeja = """
+            SELECT 
+                a.id,
+                p.radicado_interno,
+                p.juzgado,
+                p.demandado,
+                a.fecha,
+                a.descripcion,
+                a.tipificacion_sugerida,
+                a.tipificacion_definitiva,
+                a.revisado
+            FROM actuaciones a
+            JOIN procesos p ON a.radicado_interno = p.radicado_interno
+            WHERE a.revisado = FALSE
+            ORDER BY a.fecha DESC;
+        """
+        df_pendientes = pd.read_sql_query(query_bandeja, conn)
+    finally:
+        conn.close()
+        
+    if df_pendientes.empty:
+        st.success("🎉 ¡Excelente trabajo! No hay actuaciones pendientes por revisar en este momento.")
+    else:
+        st.info(f"Tienes **{len(df_pendientes)}** actuaciones nuevas capturadas por el robot pendientes de validación.")
+        
+        df_editable = df_pendientes.copy()
+        if 'tipificacion_definitiva' in df_editable.columns:
+            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida'])
+            
+        opciones_tipificacion = [
+            "Mandamiento de Pago", "Admisión de Demanda", "Rechazo / Inadmisión", 
+            "Traslado", "Oficio / Despacho Comisorio", "Liquidación de Crédito / Costas", 
+            "Auto de Trámite / General", "Terminación del Proceso"
+        ]
+        
+        st.markdown("### 📝 Panel de Validación Rápida")
+        st.markdown("Modifica la tipificación si lo consideras necesario y marca la casilla **Revisado** para limpiar este pendiente de tu bandeja.")
+        
+        df_resultado = st.data_editor(
+            df_editable,
+            column_config={
+                "id": None,
+                "radicado_interno": st.column_config.TextColumn("Expediente", disabled=True),
+                "juzgado": st.column_config.TextColumn("Juzgado", disabled=True),
+                "demandado": st.column_config.TextColumn("Parte Demandada", disabled=True),
+                "fecha": st.column_config.TextColumn("Fecha Actuación", disabled=True),
+                "descripcion": st.column_config.TextColumn("Texto del Juzgado", disabled=True),
+                "tipificacion_sugerida": st.column_config.TextColumn("Sugerencia IA", disabled=True),
+                "tipificacion_definitiva": st.column_config.SelectboxColumn(
+                    "Tipificación Definitiva", options=opciones_tipificacion, required=True
+                ),
+                "revisado": st.column_config.CheckboxColumn("¿Revisado? ✅", default=False)
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        if st.button("💾 Guardar Cambios y Actualizar Bandeja", type="primary"):
+            conn_upd = conectar_bd()
+            try:
+                cursor = conn_upd.cursor()
+                actualizados = 0
+                for index, row in df_resultado.iterrows():
+                    cursor.execute("""
+                        UPDATE actuaciones 
+                        SET tipificacion_definitiva = %s, revisado = %s 
+                        WHERE id = %s
+                    """, (row['tipificacion_definitiva'], row['revisado'], row['id']))
+                    actualizados += 1
+                conn_upd.commit()
+            finally:
+                conn_upd.close()
+                
+            st.cache_data.clear()
+            st.session_state['toast_msg'] = f"¡Se actualizaron {actualizados} registros correctamente!"
+            st.session_state['toast_icon'] = "✅"
+            st.rerun()
 
 # ==========================================
 # SECCIÓN 1: REGISTRAR PROCESO
@@ -702,7 +792,6 @@ elif menu == "Expedientes":
                                 try:
                                     cursor_del = conn_del.cursor()
                                     
-                                    # Mapeo universal dinámico para copia de seguridad
                                     cursor_del.execute("SELECT * FROM procesos WHERE radicado_interno=%s", (radicado_seleccionado,))
                                     row_proc = cursor_del.fetchone()
                                     if row_proc:
@@ -1184,7 +1273,6 @@ elif menu == "Administración":
                             try:
                                 cur_res = conn_res.cursor()
                                 
-                                # Construcción dinámica del query para inyectar los datos en CUALQUIER tabla
                                 columnas = ', '.join(datos_dict.keys())
                                 placeholders = ', '.join(['%s'] * len(datos_dict))
                                 valores = tuple(datos_dict.values())
