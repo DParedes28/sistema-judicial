@@ -423,13 +423,12 @@ if menu == "Inicio":
 # ==========================================
 elif menu == "Bandeja de Estados":
     st.header("📌 Bandeja de Entrada de Novedades Judiciales")
-    st.markdown("Revisa aquí la última actuación detectada por el robot para cada expediente, valida la tipificación y marca como revisado.")
+    st.markdown("Revisa aquí la última actuación detectada por el robot, valida la tipificación, márcala como revisada o elimínala si no deseas conservarla.")
     
     conn = conectar_bd()
     try:
-        # Usamos DISTINCT ON para traer UNICAMENTE la actuación más reciente por cada radicado
         query_bandeja = """
-            DISTINCT ON (p.radicado_interno)
+            SELECT 
                 a.id,
                 p.radicado_interno,
                 p.juzgado,
@@ -442,11 +441,9 @@ elif menu == "Bandeja de Estados":
             FROM actuaciones a
             JOIN procesos p ON a.radicado_interno = p.radicado_interno
             WHERE a.revisado = FALSE
-            ORDER BY p.radicado_interno, a.fecha DESC, a.id DESC;
+            ORDER BY p.radicado_interno, a.fecha DESC;
         """
-        # Sintaxis segura compatible con pandas/psycopg2 para DISTINCT ON
-        query_final = f"SELECT {query_bandeja}"
-        df_pendientes = pd.read_sql_query(query_final, conn)
+        df_pendientes = pd.read_sql_query(query_bandeja, conn)
     finally:
         conn.close()
         
@@ -457,13 +454,15 @@ elif menu == "Bandeja de Estados":
         
         df_editable = df_pendientes.copy()
         
-        # Limpieza segura de nulos y unificación con la sugerencia de la IA
+        # Limpieza de nulos y unificación con sugerencia de la IA
         if 'tipificacion_definitiva' in df_editable.columns:
             df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida']).fillna("Sin clasificar")
         else:
             df_editable['tipificacion_definitiva'] = df_editable['tipificacion_sugerida'].fillna("Sin clasificar")
             
-        # Incluimos "Sin clasificar" en las opciones para evitar errores de validación en el editor
+        # Agregamos columna temporal para borrado masivo en la interfaz
+        df_editable['eliminar'] = False
+            
         opciones_tipificacion = [
             "Sin clasificar",
             "Mandamiento de Pago", 
@@ -477,7 +476,7 @@ elif menu == "Bandeja de Estados":
         ]
         
         st.markdown("### 📝 Panel de Validación Rápida")
-        st.markdown("Modifica la tipificación desplegando la celda si lo deseas y marca la casilla **Revisado** para retirar el expediente de tu bandeja.")
+        st.markdown("Modifica la tipificación si lo requieres, marca **Revisado** para archivar, o marca **Eliminar** si deseas borrar permanentemente el registro.")
         
         df_resultado = st.data_editor(
             df_editable,
@@ -492,7 +491,8 @@ elif menu == "Bandeja de Estados":
                 "tipificacion_definitiva": st.column_config.SelectboxColumn(
                     "Tipificación Definitiva", options=opciones_tipificacion, required=True
                 ),
-                "revisado": st.column_config.CheckboxColumn("¿Revisado? ✅", default=False)
+                "revisado": st.column_config.CheckboxColumn("¿Revisado? ✅", default=False),
+                "eliminar": st.column_config.CheckboxColumn("¿Eliminar? 🗑️", default=False)
             },
             hide_index=True,
             use_container_width=True
@@ -503,22 +503,30 @@ elif menu == "Bandeja de Estados":
             try:
                 cursor = conn_upd.cursor()
                 actualizados = 0
+                eliminados = 0
+                
                 for index, row in df_resultado.iterrows():
-                    cursor.execute("""
-                        UPDATE actuaciones 
-                        SET tipificacion_definitiva = %s, revisado = %s 
-                        WHERE id = %s
-                    """, (row['tipificacion_definitiva'], row['revisado'], row['id']))
-                    actualizados += 1
+                    if row['eliminar']:
+                        # Si marcó eliminar, borramos el registro de la base de datos
+                        cursor.execute("DELETE FROM actuaciones WHERE id = %s", (row['id'],))
+                        eliminados += 1
+                    else:
+                        # De lo contrario, actualizamos su tipificación y estado de revisión
+                        cursor.execute("""
+                            UPDATE actuaciones 
+                            SET tipificacion_definitiva = %s, revisado = %s 
+                            WHERE id = %s
+                        """, (row['tipificacion_definitiva'], row['revisado'], row['id']))
+                        actualizados += 1
+                        
                 conn_upd.commit()
             finally:
                 conn_upd.close()
                 
             st.cache_data.clear()
-            st.session_state['toast_msg'] = f"¡Se actualizaron {actualizados} registros correctamente!"
-            st.session_state['toast_icon'] = "✅"
+            st.session_state['toast_msg'] = f"Operación exitosa: {actualizados} actualizados, {eliminados} eliminados."
+            st.session_state['toast_icon'] = "🔄"
             st.rerun()
-
 # ==========================================
 # SECCIÓN 1: REGISTRAR PROCESO
 # ==========================================
