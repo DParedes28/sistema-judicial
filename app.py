@@ -422,7 +422,7 @@ if menu == "Inicio":
 # ==========================================
 elif menu == "Bandeja de Estados":
     st.header("📌 Bandeja de Entrada de Novedades Judiciales")
-    st.markdown("Revisa aquí la última actuación detectada por el robot, valida la tipificación, márcala como revisada o elimínala si no deseas conservarla.")
+    st.markdown("Revisa aquí la última actuación detectada por el robot, valida la tipificación oficial, márcala como revisada o elimínala si no deseas conservarla.")
     
     try:
         conn = conectar_bd()
@@ -460,7 +460,7 @@ elif menu == "Bandeja de Estados":
         
         df_editable = df_pendientes.copy()
         
-        # Armonización y limpieza estricta de nulos o valores "None" de la IA
+        # Limpieza estricta de nulos o valores "None" de la IA
         if 'tipificacion_definitiva' in df_editable.columns:
             df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida']).replace({None: "Sin clasificar", "None": "Sin clasificar", "": "Sin clasificar"})
         else:
@@ -469,20 +469,11 @@ elif menu == "Bandeja de Estados":
         # Columna temporal para permitir el borrado directo de registros basura
         df_editable['eliminar'] = False
             
-        opciones_tipificacion = [
-            "Sin clasificar",
-            "Mandamiento de Pago", 
-            "Admisión de Demanda", 
-            "Rechazo / Inadmisión", 
-            "Traslado", 
-            "Oficio / Despacho Comisorio", 
-            "Liquidación de Crédito / Costas", 
-            "Auto de Trámite / General", 
-            "Terminación del Proceso"
-        ]
+        # UNIFORMIDAD TOTAL: Las opciones de tipificación definitiva se alimentan directamente de las etapas oficiales
+        opciones_tipificacion = ["Sin clasificar"] + lista_etapas
         
         st.markdown("### 📝 Panel de Validación Rápida")
-        st.markdown("Modifica la tipificación si lo requieres, marca **Revisado** para archivar, o marca **Eliminar** si deseas borrar permanentemente el registro.")
+        st.markdown("Modifica la tipificación oficial si lo requieres, marca **Revisado** para archivar, o marca **Eliminar** si deseas borrar permanentemente el registro.")
         
         df_resultado = st.data_editor(
             df_editable,
@@ -495,7 +486,7 @@ elif menu == "Bandeja de Estados":
                 "descripcion": st.column_config.TextColumn("Texto del Juzgado", disabled=True),
                 "tipificacion_sugerida": st.column_config.TextColumn("Sugerencia IA", disabled=True),
                 "tipificacion_definitiva": st.column_config.SelectboxColumn(
-                    "Tipificación Definitiva", options=opciones_tipificacion, required=True
+                    "Tipificación Oficial Definitiva", options=opciones_tipificacion, required=True
                 ),
                 "revisado": st.column_config.CheckboxColumn("¿Revisado? ✅", default=False),
                 "eliminar": st.column_config.CheckboxColumn("¿Eliminar? 🗑️", default=False)
