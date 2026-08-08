@@ -423,12 +423,13 @@ if menu == "Inicio":
 # ==========================================
 elif menu == "Bandeja de Estados":
     st.header("📌 Bandeja de Entrada de Novedades Judiciales")
-    st.markdown("Revisa aquí las últimas actuaciones detectadas automáticamente por el robot, valida la sugerencia de la IA y marca como revisado.")
+    st.markdown("Revisa aquí la última actuación detectada por el robot para cada expediente, valida la tipificación y marca como revisado.")
     
     conn = conectar_bd()
     try:
+        # Usamos DISTINCT ON para traer UNICAMENTE la actuación más reciente por cada radicado
         query_bandeja = """
-            SELECT 
+            DISTINCT ON (p.radicado_interno)
                 a.id,
                 p.radicado_interno,
                 p.juzgado,
@@ -441,29 +442,42 @@ elif menu == "Bandeja de Estados":
             FROM actuaciones a
             JOIN procesos p ON a.radicado_interno = p.radicado_interno
             WHERE a.revisado = FALSE
-            ORDER BY a.fecha DESC;
+            ORDER BY p.radicado_interno, a.fecha DESC, a.id DESC;
         """
-        df_pendientes = pd.read_sql_query(query_bandeja, conn)
+        # Sintaxis segura compatible con pandas/psycopg2 para DISTINCT ON
+        query_final = f"SELECT {query_bandeja}"
+        df_pendientes = pd.read_sql_query(query_final, conn)
     finally:
         conn.close()
         
     if df_pendientes.empty:
         st.success("🎉 ¡Excelente trabajo! No hay actuaciones pendientes por revisar en este momento.")
     else:
-        st.info(f"Tienes **{len(df_pendientes)}** actuaciones nuevas capturadas por el robot pendientes de validación.")
+        st.info(f"Tienes **{len(df_pendientes)}** expedientes con novedades recientes pendientes de validación.")
         
         df_editable = df_pendientes.copy()
+        
+        # Limpieza segura de nulos y unificación con la sugerencia de la IA
         if 'tipificacion_definitiva' in df_editable.columns:
-            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida'])
+            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida']).fillna("Sin clasificar")
+        else:
+            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_sugerida'].fillna("Sin clasificar")
             
+        # Incluimos "Sin clasificar" en las opciones para evitar errores de validación en el editor
         opciones_tipificacion = [
-            "Mandamiento de Pago", "Admisión de Demanda", "Rechazo / Inadmisión", 
-            "Traslado", "Oficio / Despacho Comisorio", "Liquidación de Crédito / Costas", 
-            "Auto de Trámite / General", "Terminación del Proceso"
+            "Sin clasificar",
+            "Mandamiento de Pago", 
+            "Admisión de Demanda", 
+            "Rechazo / Inadmisión", 
+            "Traslado", 
+            "Oficio / Despacho Comisorio", 
+            "Liquidación de Crédito / Costas", 
+            "Auto de Trámite / General", 
+            "Terminación del Proceso"
         ]
         
         st.markdown("### 📝 Panel de Validación Rápida")
-        st.markdown("Modifica la tipificación si lo consideras necesario y marca la casilla **Revisado** para limpiar este pendiente de tu bandeja.")
+        st.markdown("Modifica la tipificación desplegando la celda si lo deseas y marca la casilla **Revisado** para retirar el expediente de tu bandeja.")
         
         df_resultado = st.data_editor(
             df_editable,
