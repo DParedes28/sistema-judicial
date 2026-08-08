@@ -417,7 +417,122 @@ if menu == "Inicio":
                 st.warning(f"**[{estado_alerta}]** | Expediente: **{r['radicado_interno']}** | Tarea: **{r['titulo']}** | Límite: **{r['fecha_vencimiento']}**")
         else:
             st.success("✅ Agenda limpia. No hay términos críticos para los próximos 5 días.")
-
+# ==========================================
+# SECCIÓN: BANDEJA DE ESTADOS (ROBOT IA)
+# ==========================================
+elif menu == "Bandeja de Estados":
+    st.header("📌 Bandeja de Entrada de Novedades Judiciales")
+    st.markdown("Revisa aquí la última actuación detectada por el robot, valida la tipificación, márcala como revisada o elimínala si no deseas conservarla.")
+    
+    try:
+        conn = conectar_bd()
+        query_bandeja = """
+            SELECT 
+                a.id,
+                p.radicado_interno,
+                p.juzgado,
+                p.demandado,
+                a.fecha,
+                a.descripcion,
+                a.tipificacion_sugerida,
+                a.tipificacion_definitiva,
+                a.revisado
+            FROM actuaciones a
+            JOIN procesos p ON a.radicado_interno = p.radicado_interno
+            WHERE a.revisado = FALSE
+            ORDER BY a.fecha DESC, a.id DESC;
+        """
+        df_pendientes = pd.read_sql_query(query_bandeja, conn)
+        conn.close()
+        
+        # Filtramos de forma segura en Pandas para conservar únicamente la actuación más reciente por expediente
+        if not df_pendientes.empty:
+            df_pendientes = df_pendientes.drop_duplicates(subset=['radicado_interno'], keep='first')
+            
+    except Exception as e:
+        st.error(f"⚠️ Error al conectar o consultar la base de datos: {e}")
+        df_pendientes = pd.DataFrame()
+        
+    if df_pendientes.empty:
+        st.success("🎉 ¡Excelente trabajo! No hay actuaciones pendientes por revisar en este momento.")
+    else:
+        st.info(f"Tienes **{len(df_pendientes)}** expedientes con novedades recientes pendientes de validación.")
+        
+        df_editable = df_pendientes.copy()
+        
+        # Armonización y limpieza estricta de nulos o valores "None" de la IA
+        if 'tipificacion_definitiva' in df_editable.columns:
+            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_definitiva'].fillna(df_editable['tipificacion_sugerida']).replace({None: "Sin clasificar", "None": "Sin clasificar", "": "Sin clasificar"})
+        else:
+            df_editable['tipificacion_definitiva'] = df_editable['tipificacion_sugerida'].fillna("Sin clasificar").replace({None: "Sin clasificar", "None": "Sin clasificar", "": "Sin clasificar"})
+            
+        # Columna temporal para permitir el borrado directo de registros basura
+        df_editable['eliminar'] = False
+            
+        opciones_tipificacion = [
+            "Sin clasificar",
+            "Mandamiento de Pago", 
+            "Admisión de Demanda", 
+            "Rechazo / Inadmisión", 
+            "Traslado", 
+            "Oficio / Despacho Comisorio", 
+            "Liquidación de Crédito / Costas", 
+            "Auto de Trámite / General", 
+            "Terminación del Proceso"
+        ]
+        
+        st.markdown("### 📝 Panel de Validación Rápida")
+        st.markdown("Modifica la tipificación si lo requieres, marca **Revisado** para archivar, o marca **Eliminar** si deseas borrar permanentemente el registro.")
+        
+        df_resultado = st.data_editor(
+            df_editable,
+            column_config={
+                "id": None,
+                "radicado_interno": st.column_config.TextColumn("Expediente", disabled=True),
+                "juzgado": st.column_config.TextColumn("Juzgado", disabled=True),
+                "demandado": st.column_config.TextColumn("Parte Demandada", disabled=True),
+                "fecha": st.column_config.TextColumn("Fecha Actuación", disabled=True),
+                "descripcion": st.column_config.TextColumn("Texto del Juzgado", disabled=True),
+                "tipificacion_sugerida": st.column_config.TextColumn("Sugerencia IA", disabled=True),
+                "tipificacion_definitiva": st.column_config.SelectboxColumn(
+                    "Tipificación Definitiva", options=opciones_tipificacion, required=True
+                ),
+                "revisado": st.column_config.CheckboxColumn("¿Revisado? ✅", default=False),
+                "eliminar": st.column_config.CheckboxColumn("¿Eliminar? 🗑️", default=False)
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        if st.button("💾 Guardar Cambios y Actualizar Bandeja", type="primary"):
+            try:
+                conn_upd = conectar_bd()
+                cursor = conn_upd.cursor()
+                actualizados = 0
+                eliminados = 0
+                
+                for index, row in df_resultado.iterrows():
+                    if row['eliminar']:
+                        cursor.execute("DELETE FROM actuaciones WHERE id = %s", (row['id'],))
+                        eliminados += 1
+                    else:
+                        cursor.execute("""
+                            UPDATE actuaciones 
+                            SET tipificacion_definitiva = %s, revisado = %s 
+                            WHERE id = %s
+                        """, (row['tipificacion_definitiva'], row['revisado'], row['id']))
+                        actualizados += 1
+                        
+                conn_upd.commit()
+                cursor.close()
+                conn_upd.close()
+                
+                st.cache_data.clear()
+                st.session_state['toast_msg'] = f"Operación exitosa: {actualizados} actualizados, {eliminados} eliminados."
+                st.session_state['toast_icon'] = "🔄"
+                st.rerun()
+            except Exception as e:
+                st.error(f"⚠️ Error al guardar los cambios en la base de datos: {e}")
 
 # ==========================================
 # SECCIÓN 1: REGISTRAR PROCESO
