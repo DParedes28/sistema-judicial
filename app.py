@@ -755,30 +755,30 @@ elif menu == "Expedientes":
                     with st.expander("⚙️ Editar Datos Generales"):
                         with st.form(key=f"form_editar_proc_{radicado_seleccionado}"):
                             c_e1, c_e2, c_e3, c_e4 = st.columns(4)
-                            n_nat = c_e1.selectbox("Naturaleza", lista_procesos, index=lista_procesos.index(proceso_fila['naturaleza']) if proceso_fila['naturaleza'] in lista_procesos else 0)
-                            n_dem = c_e2.text_input("Demandado(s)", value=proceso_fila['demandado'])
-                            n_rad = c_e3.text_input("Radicado Rama", value=proceso_fila['radicado_rama'] if proceso_fila['radicado_rama'] != "EN REPARTO" else "")
-                            n_estado = c_e4.selectbox("Estado", ["Activo", "Terminado"], index=0 if estado_proceso == "Activo" else 1)
+                            n_nat = c_e1.selectbox("Naturaleza", lista_procesos, index=lista_procesos.index(proceso_fila['naturaleza']) if proceso_fila['naturaleza'] in lista_procesos else 0, key=f"edit_nat_{radicado_seleccionado}")
+                            n_dem = c_e2.text_input("Demandado(s)", value=proceso_fila['demandado'], key=f"edit_dem_{radicado_seleccionado}")
+                            n_rad = c_e3.text_input("Radicado Rama", value=proceso_fila['radicado_rama'] if proceso_fila['radicado_rama'] != "EN REPARTO" else "", key=f"edit_rad_{radicado_seleccionado}")
+                            n_estado = c_e4.selectbox("Estado", ["Activo", "Terminado"], index=0 if estado_proceso == "Activo" else 1, key=f"edit_est_{radicado_seleccionado}")
 
                             st.markdown("---")
-                            actualizar_juz = st.checkbox("Actualizar Juzgado mediante selectores", value=False)
+                            st.markdown("**Actualizar Despacho Judicial**")
                             c_j1, c_j2, c_j3 = st.columns(3)
-                            n_num = c_j1.selectbox("Número", list(range(1, 101)))
-                            n_tipo = c_j2.selectbox("Especialidad", lista_juzgados_esp)
-                            n_ciu = c_j3.text_input("Ciudad", value="PEREIRA").upper()
+                            n_num = c_j1.selectbox("Número", list(range(1, 101)), key=f"edit_num_{radicado_seleccionado}")
+                            n_tipo = c_j2.selectbox("Especialidad", lista_juzgados_esp, key=f"edit_tipo_{radicado_seleccionado}")
+                            n_ciu = c_j3.text_input("Ciudad", value="PEREIRA", key=f"edit_ciu_{radicado_seleccionado}").upper()
                             
                             st.markdown("---")
                             c_e5, c_e6, c_e7 = st.columns(3)
-                            n_pret = c_e5.number_input("Pretensiones ($)", value=val_pret_ficha)
+                            n_pret = c_e5.number_input("Pretensiones ($)", value=val_pret_ficha, key=f"edit_pret_{radicado_seleccionado}")
                             
                             abogados_list = abogados_df['nombre'].tolist()
                             idx_abg = abogados_list.index(proceso_fila['abogado_asignado']) if proceso_fila['abogado_asignado'] in abogados_list else 0
-                            n_abg_nombre = c_e6.selectbox("Abogado Responsable", abogados_list, index=idx_abg)
+                            n_abg_nombre = c_e6.selectbox("Abogado Responsable", abogados_list, index=idx_abg, key=f"edit_abg_{radicado_seleccionado}")
                             n_abg_id = abogados_df[abogados_df['nombre'] == n_abg_nombre]['id'].values[0]
-                            n_med = c_e7.text_input("Medidas Cautelares", value=proceso_fila['medidas_cautelares'])
+                            n_med = c_e7.text_input("Medidas Cautelares", value=proceso_fila['medidas_cautelares'], key=f"edit_med_{radicado_seleccionado}")
 
                             if st.form_submit_button("💾 Guardar Cambios"):
-                                juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}" if actualizar_juz else proceso_fila['juzgado']
+                                juz_guardar = f"JUZGADO {obtener_nombre_numero(n_num)} {n_tipo} DE {n_ciu}"
                                 rad_guardar = n_rad if n_rad else "EN REPARTO"
                                 
                                 estado_anterior_dict = dict(proceso_fila)
@@ -801,7 +801,7 @@ elif menu == "Expedientes":
                     if usuario_rol == "Maestro":
                         with st.expander("🚨 Zona de Riesgo: Eliminar Expediente (Exclusivo Maestro)"):
                             st.warning("Esta acción eliminará permanentemente el expediente y enviará una copia de respaldo estructurada a la Papelera de Auditoría.")
-                            if st.button("🗑️ Eliminar Expediente Completamente"):
+                            if st.button("🗑️ Eliminar Expediente Completamente", key=f"btn_del_proc_{radicado_seleccionado}"):
                                 conn_del = conectar_bd()
                                 try:
                                     cursor_del = conn_del.cursor()
@@ -887,11 +887,11 @@ elif menu == "Expedientes":
                             autor_nota = f" (Por: {r['usuario']})" if 'usuario' in r and pd.notna(r['usuario']) and r['usuario'] != "" else ""
                             with st.expander(f"{r['fecha']} | {r['etapa']}{autor_nota}"):
                                 with st.form(key=f"edit_act_{r['id']}"):
-                                    n_f = st.text_input("Fecha", value=r['fecha'])
-                                    n_e = st.selectbox("Etapa", lista_etapas, index=lista_etapas.index(r['etapa']) if r['etapa'] in lista_etapas else 0)
-                                    n_d = st.text_area("Descripción", value=r['descripcion'])
+                                    n_f = st.text_input("Fecha", value=r['fecha'], key=f"f_act_edit_{r['id']}")
+                                    n_e = st.selectbox("Etapa", lista_etapas, index=lista_etapas.index(r['etapa']) if r['etapa'] in lista_etapas else 0, key=f"e_act_edit_{r['id']}")
+                                    n_d = st.text_area("Descripción", value=r['descripcion'], key=f"d_act_edit_{r['id']}")
                                     cb1, cb2 = st.columns(2)
-                                    if cb1.form_submit_button("💾 Modificar"):
+                                    if cb1.form_submit_button("💾 Modificar", key=f"btn_mod_act_{r['id']}"):
                                         conn_u = conectar_bd()
                                         try:
                                             conn_u.cursor().execute("UPDATE actuaciones SET fecha=%s, etapa=%s, descripcion=%s WHERE id=%s", (n_f, n_e, n_d, r['id']))
@@ -901,7 +901,7 @@ elif menu == "Expedientes":
                                             conn_u.close()
                                         st.cache_data.clear()
                                         st.rerun()
-                                    if cb2.form_submit_button("🗑️ Eliminar"):
+                                    if cb2.form_submit_button("🗑️ Eliminar", key=f"btn_del_act_{r['id']}"):
                                         if usuario_rol == "Maestro":
                                             conn_d = conectar_bd()
                                             try:
@@ -919,7 +919,7 @@ elif menu == "Expedientes":
                     col_g1, col_g2 = st.columns([1, 1.5])
                     with col_g1:
                         st.markdown("**💸 Control de Gastos y Costas**")
-                        with st.form("form_gasto", clear_on_submit=True):
+                        with st.form(f"form_gasto_{radicado_seleccionado}", clear_on_submit=True):
                             f_gasto = st.date_input("Fecha", key=f"f_gas_{radicado_seleccionado}")
                             c_gasto = st.text_input("Concepto", key=f"c_gas_{radicado_seleccionado}")
                             v_gasto = st.number_input("Valor ($)", min_value=0.0, step=10000.0, key=f"v_gas_{radicado_seleccionado}")
@@ -953,12 +953,12 @@ elif menu == "Expedientes":
                             for idx, r in gastos_df.iterrows():
                                 with st.expander(f"🧾 {r['fecha']} | {r['concepto']} - ${r['valor']:,.2f}"):
                                     with st.form(key=f"edit_gas_{r['id']}"):
-                                        n_fg = st.text_input("Fecha", value=r['fecha'])
-                                        n_cg = st.text_input("Concepto", value=r['concepto'])
-                                        n_vg = st.number_input("Valor ($)", value=float(r['valor']))
+                                        n_fg = st.text_input("Fecha", value=r['fecha'], key=f"f_gas_edit_{r['id']}")
+                                        n_cg = st.text_input("Concepto", value=r['concepto'], key=f"c_gas_edit_{r['id']}")
+                                        n_vg = st.number_input("Valor ($)", value=float(r['valor']), key=f"v_gas_edit_{r['id']}")
                                         
                                         c_bg1, c_bg2 = st.columns(2)
-                                        if c_bg1.form_submit_button("💾 Modificar"):
+                                        if c_bg1.form_submit_button("💾 Modificar", key=f"btn_mod_gas_{r['id']}"):
                                             conn_ug = conectar_bd()
                                             try:
                                                 conn_ug.cursor().execute("UPDATE gastos SET fecha=%s, concepto=%s, valor=%s WHERE id=%s", (n_fg, n_cg, n_vg, r['id']))
@@ -968,7 +968,7 @@ elif menu == "Expedientes":
                                                 conn_ug.close()
                                             st.cache_data.clear()
                                             st.rerun()
-                                        if c_bg2.form_submit_button("🗑️ Eliminar"):
+                                        if c_bg2.form_submit_button("🗑️ Eliminar", key=f"btn_del_gas_{r['id']}"):
                                             if usuario_rol == "Maestro":
                                                 conn_dg = conectar_bd()
                                                 try:
@@ -981,8 +981,10 @@ elif menu == "Expedientes":
                                                 st.rerun()
                                             else:
                                                 st.error("🔒 Solo el Administrador Maestro puede eliminar gastos.")
-        else:
-            st.warning("No se encontraron expedientes.")
+            else:
+                st.warning("No se encontraron expedientes.")
+    else:
+        st.warning("No se encontraron expedientes en la base de datos.")
 
 # ==========================================
 # SECCIÓN 3: AGENDA 
