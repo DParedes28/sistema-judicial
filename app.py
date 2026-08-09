@@ -8,7 +8,7 @@ import io
 import json
 import plotly.express as px
 from streamlit_option_menu import option_menu
-import bcrypt  # NUEVO: Para seguridad de contraseñas
+import bcrypt  # Para seguridad de contraseñas
 
 # --- CONFIGURACIÓN DE PÁGINA Y ESTILO DARK MODE ---
 st.set_page_config(page_title="Sistema de Gestión Judicial", layout="wide")
@@ -71,7 +71,6 @@ def hashear_password(password_plana):
     return bcrypt.hashpw(password_plana.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def verificar_password(password_plana, password_hash):
-    # Fallback de rescate para contraseñas antiguas que no están encriptadas
     if not password_hash.startswith('$2'): 
         return password_plana == password_hash
     return bcrypt.checkpw(password_plana.encode('utf-8'), password_hash.encode('utf-8'))
@@ -80,14 +79,12 @@ def verificar_password(password_plana, password_hash):
 def conectar_bd():
     return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-# Cacheamos solo los abogados, ya que raramente cambian.
 @st.cache_data(ttl=300)
 def cargar_abogados():
     with conectar_bd() as conn:
         df = pd.read_sql_query("SELECT id, nombre, rol, password, email, telefono FROM abogados", conn)
     return df
 
-# Se retira el cache de tablas transaccionales para evitar problemas de sincronización multi-usuario
 def cargar_procesos_general():
     with conectar_bd() as conn:
         query = '''SELECT p.*, c.nombre AS demandante_db, a.nombre AS abogado_asignado 
@@ -123,7 +120,6 @@ def obtener_nombres_demandantes(id_cliente_str, conn):
                     if res2: nombres.append(res2[0])
                     else: nombres.append(i)
             except Exception as e:
-                # Log the error internally, don't crash
                 nombres.append(i)
     return " / ".join(nombres) if nombres else "DEMANDANTE"
 
@@ -152,6 +148,30 @@ def crear_tablas():
             cursor.execute('''CREATE TABLE IF NOT EXISTS vencimientos (id SERIAL PRIMARY KEY, radicado_interno TEXT, titulo TEXT, fecha_vencimiento TEXT, estado TEXT DEFAULT 'Pendiente', observaciones TEXT)''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS contactos (id SERIAL PRIMARY KEY, nombre TEXT, tipo TEXT, telefono TEXT, email TEXT, direccion TEXT, ciudad TEXT, identificacion TEXT)''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS gastos (id SERIAL PRIMARY KEY, radicado_interno TEXT, fecha TEXT, concepto TEXT, valor NUMERIC)''')
+            
+            # Tablas de Cartera Pre-jurídica
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS obligaciones (
+                    id SERIAL PRIMARY KEY,
+                    identificacion_deudor TEXT,
+                    tipo_titulo TEXT,
+                    capital NUMERIC,
+                    fecha_exigibilidad TEXT,
+                    estado TEXT DEFAULT 'En Mora'
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS gestiones_cartera (
+                    id SERIAL PRIMARY KEY,
+                    id_obligacion INTEGER,
+                    fecha_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tipo_contacto TEXT,
+                    resumen TEXT,
+                    promesa_pago_fecha TEXT,
+                    usuario TEXT
+                )
+            ''')
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS auditoria (
                     id SERIAL PRIMARY KEY, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, usuario TEXT,
@@ -252,8 +272,8 @@ else:
     with st.sidebar:
         menu = option_menu(
             menu_title=None,
-            options=["Inicio", "Bandeja de Estados", "Nuevo Proceso", "Expedientes", "Vencimientos", "Directorio", "Informes", "Administración"],
-            icons=["house", "inbox", "file-earmark-plus", "folder2-open", "alarm", "book", "graph-up", "people"],
+            options=["Inicio", "Bandeja de Estados", "Nuevo Proceso", "Expedientes", "Vencimientos", "Directorio", "Cartera", "Informes", "Administración"],
+            icons=["house", "inbox", "file-earmark-plus", "folder2-open", "alarm", "book", "wallet", "graph-up", "people"],
             default_index=0,
             styles={
                 "container": {"padding": "0!important", "background-color": "transparent"},
@@ -342,7 +362,6 @@ if menu == "Inicio":
         limite_urgente = str(date.today() + timedelta(days=5))
         hoy_str = str(date.today())
         
-        # INYECCIÓN SQL ARREGLADA: Uso de variables y placeholders %s
         query_kpis = """
             SELECT 
                 (SELECT COUNT(*) FROM procesos WHERE estado='Activo') as total_activos,
@@ -357,7 +376,6 @@ if menu == "Inicio":
         sum_pretensiones = float(df_kpis.iloc[0]['sum_pretensiones'])
         venc_urgentes_df = int(df_kpis.iloc[0]['venc_urgentes'])
         
-        # INYECCIÓN SQL ARREGLADA
         radar_query = "SELECT * FROM vencimientos WHERE estado='Pendiente' AND fecha_vencimiento <= %s ORDER BY fecha_vencimiento ASC"
         radar_df = pd.read_sql_query(radar_query, conn, params=(limite_urgente,))
     
@@ -601,7 +619,6 @@ elif menu == "Nuevo Proceso":
                 with conectar_bd() as conn:
                     with conn.cursor() as cursor:
                         
-                        # Consumo nativo de la secuencia de Postgres
                         cursor.execute("SELECT nextval('radicado_seq')")
                         radicado_interno_real = f"EXP-{cursor.fetchone()[0]:04d}"
                         
@@ -1044,6 +1061,140 @@ elif menu == "Directorio":
                     else:
                         st.error("🔒 Solo el Administrador Maestro puede eliminar contactos.")
             st.dataframe(df_cont.drop(columns=['id']), use_container_width=True)
+
+# ==========================================
+# SECCIÓN EXTRA: CARTERA PRE-JURÍDICA
+# ==========================================
+elif menu == "Cartera":
+    st.header("Módulo de Recuperación Pre-jurídica")
+    
+    with conectar_bd() as conn:
+        df_ob = pd.read_sql_query("SELECT * FROM obligaciones WHERE estado != 'Pagada'", conn)
+        total_capital = df_ob['capital'].sum() if not df_ob.empty else 0.0
+        total_obligaciones = len(df_ob)
+        
+    c_k1, c_k2, c_k3 = st.columns(3)
+    with c_k1:
+        st.markdown(f"<div class='metric-card'><h2 style='color:#30d158;margin:0;font-size:28px;'>${total_capital:,.0f}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Capital en Cobro</p></div>", unsafe_allow_html=True)
+    with c_k2:
+        st.markdown(f"<div class='metric-card'><h2 style='color:#0a84ff;margin:0;font-size:28px;'>{total_obligaciones}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Obligaciones Activas</p></div>", unsafe_allow_html=True)
+        
+    st.markdown("---")
+    
+    tab_ingreso, tab_gestion, tab_promesas = st.tabs(["📥 Radicar Obligación", "📞 Gestión y CRM", "🗓️ Promesas de Pago"])
+    
+    with tab_ingreso:
+        st.subheader("Registrar Nuevo Título Valor")
+        with st.form("form_nueva_obligacion", clear_on_submit=True):
+            df_contactos = cargar_contactos_general()
+            lista_deudores = [f"{r['identificacion']} - {r['nombre']}" for i, r in df_contactos.iterrows() if r['identificacion']] if not df_contactos.empty else []
+            
+            sel_deudor = st.selectbox("Seleccione el Deudor (Debe existir en Directorio)", lista_deudores)
+            
+            col_o1, col_o2 = st.columns(2)
+            tipo_t = col_o1.selectbox("Tipo de Título", ["Pagaré", "Factura de Venta", "Letra de Cambio", "Contrato", "Otro"])
+            cap_t = col_o2.number_input("Capital Adeudado ($)", min_value=0.0, step=100000.0)
+            f_exigible = st.date_input("Fecha de Exigibilidad (Vencimiento del plazo)")
+            
+            if st.form_submit_button("💾 Ingresar a Cartera", use_container_width=True):
+                if sel_deudor and cap_t > 0:
+                    id_deudor = sel_deudor.split(" - ")[0]
+                    with conectar_bd() as conn_ob:
+                        conn_ob.cursor().execute(
+                            "INSERT INTO obligaciones (identificacion_deudor, tipo_titulo, capital, fecha_exigibilidad) VALUES (%s, %s, %s, %s)",
+                            (id_deudor, tipo_t, cap_t, str(f_exigible))
+                        )
+                        conn_ob.commit()
+                    st.success("✅ Obligación radicada exitosamente en etapa pre-jurídica.")
+                    st.rerun()
+
+    with tab_gestion:
+        if df_ob.empty:
+            st.info("No hay obligaciones activas en cobro pre-jurídico.")
+        else:
+            df_ob['fecha_exigibilidad'] = pd.to_datetime(df_ob['fecha_exigibilidad'])
+            df_ob['dias_mora'] = (pd.Timestamp.now() - df_ob['fecha_exigibilidad']).dt.days
+            
+            df_ob = df_ob.merge(df_contactos[['identificacion', 'nombre']], left_on='identificacion_deudor', right_on='identificacion', how='left')
+            
+            lista_cobros = [f"ID:{r['id']} | {r['nombre']} | Mora: {r['dias_mora']} días | Capital: ${r['capital']:,.0f}" for i, r in df_ob.iterrows()]
+            cobro_sel = st.selectbox("Seleccione la obligación a gestionar:", lista_cobros)
+            
+            if cobro_sel:
+                id_ob_sel = int(cobro_sel.split(" | ")[0].replace("ID:", ""))
+                datos_ob = df_ob[df_ob['id'] == id_ob_sel].iloc[0]
+                
+                col_c1, col_c2 = st.columns([1, 1.5])
+                
+                with col_c1:
+                    st.markdown(f"""
+                    <div class='ficha-tecnica'>
+                        <h3 style='margin-top:0;'>{datos_ob['nombre']}</h3>
+                        <b>Cédula/NIT:</b> {datos_ob['identificacion_deudor']}<br>
+                        <b>Título:</b> {datos_ob['tipo_titulo']}<br>
+                        <b>Días en Mora:</b> <span style='color:#ff453a; font-weight:bold;'>{datos_ob['dias_mora']} días</span><br>
+                        <b>Capital:</b> ${datos_ob['capital']:,.2f}<br>
+                        <b>Estado:</b> {datos_ob['estado']}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("**Registrar Llamada / Contacto**")
+                    with st.form("form_gestion"):
+                        canal = st.selectbox("Canal de Contacto", ["Llamada Telefónica", "WhatsApp", "Correo Electrónico"])
+                        resumen = st.text_area("Resultado de la gestión")
+                        hay_promesa = st.checkbox("¿Se logró una promesa de pago?")
+                        fecha_promesa = st.date_input("Fecha de la promesa", disabled=not hay_promesa)
+                        
+                        pasar_juridico = st.checkbox("🚨 Agotar etapa y trasladar a Jurídico")
+                        
+                        if st.form_submit_button("💾 Guardar Gestión"):
+                            fp_str = str(fecha_promesa) if hay_promesa else None
+                            nuevo_estado = "En Jurídico" if pasar_juridico else ("Acuerdo/Promesa" if hay_promesa else datos_ob['estado'])
+                            
+                            with conectar_bd() as conn_g:
+                                cur = conn_g.cursor()
+                                cur.execute("INSERT INTO gestiones_cartera (id_obligacion, tipo_contacto, resumen, promesa_pago_fecha, usuario) VALUES (%s, %s, %s, %s, %s)",
+                                            (id_ob_sel, canal, resumen, fp_str, usuario_seleccionado))
+                                cur.execute("UPDATE obligaciones SET estado = %s WHERE id = %s", (nuevo_estado, id_ob_sel))
+                                conn_g.commit()
+                                
+                            st.success("Gestión registrada.")
+                            st.rerun()
+                
+                with col_c2:
+                    st.markdown("**📜 Línea de Tiempo de Gestiones**")
+                    with conectar_bd() as conn_hist_g:
+                        df_hist = pd.read_sql_query("SELECT * FROM gestiones_cartera WHERE id_obligacion = %s ORDER BY fecha_hora DESC", conn_hist_g, params=(id_ob_sel,))
+                    
+                    if df_hist.empty:
+                        st.info("No hay historial de contactos para esta obligación.")
+                    else:
+                        for idx, h in df_hist.iterrows():
+                            nota_promesa = f" - 🗓️ **Promesa para:** {h['promesa_pago_fecha']}" if h['promesa_pago_fecha'] else ""
+                            st.markdown(f"""
+                            <div style='background: #1c1c1e; padding: 12px; border-radius: 8px; border-left: 3px solid #0a84ff; margin-bottom: 10px;'>
+                                <small style='color:#8e8e93;'>{h['fecha_hora']} | {h['tipo_contacto']} | Por: {h['usuario']}</small><br>
+                                <span>{h['resumen']}</span>{nota_promesa}
+                            </div>
+                            """, unsafe_allow_html=True)
+
+    with tab_promesas:
+        st.subheader("Promesas de Pago Activas")
+        with conectar_bd() as conn_p:
+            query_promesas = """
+                SELECT g.promesa_pago_fecha, o.capital, c.nombre, c.telefono, o.id as id_ob
+                FROM gestiones_cartera g
+                JOIN obligaciones o ON g.id_obligacion = o.id
+                JOIN contactos c ON o.identificacion_deudor = c.identificacion
+                WHERE g.promesa_pago_fecha IS NOT NULL AND o.estado = 'Acuerdo/Promesa'
+                ORDER BY g.promesa_pago_fecha ASC
+            """
+            df_prom = pd.read_sql_query(query_promesas, conn_p)
+            
+        if df_prom.empty:
+            st.success("No hay promesas de pago pendientes de verificación.")
+        else:
+            st.dataframe(df_prom, hide_index=True, use_container_width=True)
 
 # ==========================================
 # SECCIÓN 5: RESUMEN E INFORMES (EXCEL)
