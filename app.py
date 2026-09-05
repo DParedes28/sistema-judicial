@@ -1343,15 +1343,16 @@ elif menu == "Cartera":
                 }
                 if y in historico and m in historico[y]: return historico[y][m]
                 elif y < 2023: return 0.28 # Promedio conservador histórico
-                else: return 0.2924 # Mantiene la última tasa conocida si vamos en 2027
-
+                else: return 0.2924 # Mantiene la última tasa conocida
+                
             # --- CONEXIÓN EN TIEMPO REAL AL GOBIERNO (DATOS.GOV.CO) ---
             if 'historico_superfinanciera' not in st.session_state:
                 import requests
                 import pandas as pd
                 try:
                     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-                    url = "https://www.datos.gov.co/resource/pare-7x5i.json?$limit=5000"
+                    # CORRECCIÓN 1: Forzamos la consulta DESC (descendente) para no perder las tasas recientes
+                    url = "https://www.datos.gov.co/resource/pare-7x5i.json?$limit=5000&$order=vigencia_desde DESC"
                     resp = requests.get(url, headers=headers, timeout=6)
                     if resp.status_code == 200:
                         df_sf = pd.DataFrame(resp.json())
@@ -1410,7 +1411,6 @@ elif menu == "Cartera":
             st.markdown("---")
             st.write("**Configuración de la Liquidación**")
             
-            # Aviso inteligente (ya no es un error rojo molesto)
             if st.session_state.get('historico_superfinanciera') is not None:
                 st.success("🟢 Conectado al histórico online del Gobierno de Colombia.")
             else:
@@ -1489,20 +1489,26 @@ elif menu == "Cartera":
                             cap_mes = ord_val + ext_val
                             cap_acumulado += cap_mes
                             
-                            # --- EL CORAZÓN DEL CÁLCULO JUDICIAL ---
+                            # --- CORRECCIÓN 2: EL CORAZÓN DEL CÁLCULO JUDICIAL ---
                             if "Fija" in tipo_tasa:
+                                # Tasa fijada por asamblea (mensual comercial).
                                 tasa_decimal_mes = tasa_input / 100.0
                                 str_tasa = f"{tasa_input}%"
+                                if cap_acumulado > 0:
+                                    interes_mes = cap_acumulado * tasa_decimal_mes * (dias / 30.0)
+                                else:
+                                    interes_mes = 0
                             else:
                                 tasa_ea = obtener_tasa_sf(y, m)
-                                # FÓRMULA LEGAL JUZGADOS: Efectiva Anual a Efectiva Mensual
-                                tasa_decimal_mes = ((1 + tasa_ea) ** (1/12)) - 1
-                                str_tasa = f"SF: {(tasa_decimal_mes*100):.2f}%"
-                            
-                            if cap_acumulado > 0:
-                                interes_mes = cap_acumulado * tasa_decimal_mes * (dias / 30.0)
-                            else:
-                                interes_mes = 0
+                                # FÓRMULA LEGAL JUZGADOS: Efectiva Anual a Efectiva Diaria (Base 365 días)
+                                tasa_efectiva_diaria = ((1 + tasa_ea) ** (1/365)) - 1
+                                str_tasa = f"SF: {(tasa_ea*100):.2f}% E.A."
+                                
+                                # Interés mes a mes basado estrictamente en los días CALENDARIO exactos
+                                if cap_acumulado > 0:
+                                    interes_mes = cap_acumulado * tasa_efectiva_diaria * dias
+                                else:
+                                    interes_mes = 0
                                 
                             int_acumulado += interes_mes
                             cap_mas_int = cap_acumulado + interes_mes
@@ -1551,7 +1557,6 @@ elif menu == "Cartera":
                         col_r3.metric(f"3. HONORARIOS ({honorarios_pct}%)", f"${total_honorarios:,.0f}")
                         col_r4.metric("4. GASTOS", f"${gastos_cobranza:,.0f}")
                         col_r5.metric("TOTAL A PAGAR", f"${gran_total:,.0f}")
-
     # ==========================================
     # PESTAÑA: INGRESO CARTERA COMERCIAL (Genérica)
     # ==========================================
