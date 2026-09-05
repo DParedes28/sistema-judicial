@@ -1166,7 +1166,70 @@ elif menu == "Cartera":
                         st.error("Seleccione un inmueble e ingrese un valor de capital válido.")
                         
         with sub_ph3:
-            st.info("🚧 Aquí construiremos el Motor de Liquidación Automática en Python que cruzará el capital con la tabla `historico_tasas` y se conectará con Gemini para redactar los cobros.")
+            st.write("**🧮 Motor de Liquidación de Intereses a la Fecha**")
+            with conectar_bd() as conn_liq:
+                try:
+                    df_inmuebles_liq = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_liq)
+                    lista_inms_liq = [f"{r['id']} - {r['conjunto_residencial']} {r['torre_apto']} ({r['nombre']})" for _, r in df_inmuebles_liq.iterrows()] if not df_inmuebles_liq.empty else []
+                except:
+                    lista_inms_liq = []
+                
+            sel_inmueble_liq = st.selectbox("Seleccione el Inmueble a Liquidar", lista_inms_liq)
+            
+            # Para el MVP, permitimos ingresar la tasa máxima legal vigente manual (usualmente ~28-30% EA en Colombia)
+            tasa_mora_anual = st.number_input("Tasa de Interés de Mora Vigente (E.A. %)", min_value=0.0, value=28.5, step=0.1, help="Tasa Efectiva Anual (Límite de usura o 1.5x Bancario Corriente)")
+            
+            if st.button("⚡ Ejecutar Liquidación Matemática", use_container_width=True):
+                if sel_inmueble_liq:
+                    id_inm_liq = int(sel_inmueble_liq.split(" - ")[0])
+                    with conectar_bd() as conn_l:
+                        query_deuda = "SELECT * FROM expensas_ph WHERE inmueble_id = %s AND estado = 'En Mora' ORDER BY fecha_vencimiento ASC"
+                        df_deuda = pd.read_sql_query(query_deuda, conn_l, params=(id_inm_liq,))
+                    
+                    if df_deuda.empty:
+                        st.success("✅ Este inmueble está a paz y salvo. No hay expensas en mora registradas.")
+                    else:
+                        # 1. Definir la fecha de hoy para el corte
+                        hoy = pd.Timestamp.now().normalize()
+                        df_deuda['fecha_vencimiento'] = pd.to_datetime(df_deuda['fecha_vencimiento'])
+                        
+                        # 2. Calcular días de mora (Si es negativo, la mora es 0)
+                        df_deuda['dias_mora'] = (hoy - df_deuda['fecha_vencimiento']).dt.days
+                        df_deuda['dias_mora'] = df_deuda['dias_mora'].apply(lambda x: x if x > 0 else 0)
+                        
+                        # 3. Matemática Financiera: Fórmula de interés simple por días
+                        tasa_diaria = (tasa_mora_anual / 100) / 365
+                        df_deuda['interes_mora'] = df_deuda['valor_capital'] * tasa_diaria * df_deuda['dias_mora']
+                        df_deuda['total_cuota'] = df_deuda['valor_capital'] + df_deuda['interes_mora']
+                        
+                        # 4. Consolidar totales
+                        total_capital_liq = df_deuda['valor_capital'].sum()
+                        total_intereses_liq = df_deuda['interes_mora'].sum()
+                        gran_total_liq = df_deuda['total_cuota'].sum()
+                        
+                        st.markdown("### 📊 Estado de Cuenta Oficial")
+                        c_tot1, c_tot2, c_tot3 = st.columns(3)
+                        c_tot1.metric("Capital Adeudado", f"${total_capital_liq:,.0f}")
+                        c_tot2.metric("Intereses de Mora", f"${total_intereses_liq:,.0f}")
+                        c_tot3.metric("Gran Total a Cobrar", f"${gran_total_liq:,.0f}")
+                        
+                        # Formatear la tabla para que se vea como un extracto profesional
+                        df_mostrar = df_deuda[['concepto', 'periodo_mes', 'periodo_anio', 'dias_mora', 'valor_capital', 'interes_mora', 'total_cuota']].copy()
+                        df_mostrar.columns = ['Concepto', 'Mes', 'Año', 'Días Mora', 'Capital', 'Interés Mora', 'Total']
+                        
+                        st.dataframe(
+                            df_mostrar.style.format({
+                                'Capital': '${:,.0f}', 
+                                'Interés Mora': '${:,.0f}', 
+                                'Total': '${:,.0f}'
+                            }), 
+                            use_container_width=True, 
+                            hide_index=True
+                        )
+                        
+                        st.markdown("---")
+                        st.markdown("### 🤖 Generar Notificación / Cobro")
+                        st.info("La liquidación matemática exacta está lista. El siguiente paso es inyectar el 'Gran Total a Cobrar' a la plantilla de Meta para despachar el mensaje por WhatsApp.")
 
     # ==========================================
     # PESTAÑA: INGRESO CARTERA COMERCIAL (Genérica)
