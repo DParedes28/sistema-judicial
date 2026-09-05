@@ -1108,27 +1108,103 @@ elif menu == "Cartera":
                 
                 sel_prop = st.selectbox("Seleccione el Propietario (Directorio)", lista_propietarios)
                 
-                c_i1, c_i2 = st.columns(2)
-                conjunto = c_i1.text_input("Conjunto Residencial / Edificio").upper()
-                apto = c_i2.text_input("Torre y Apartamento / Local").upper()
+                c_i1, c_i2, c_i3 = st.columns([2, 1, 1])
+                conjunto = c_i1.text_input("Conjunto Residencial").upper()
+                bloque = c_i2.text_input("Bloque/Torre (Opc.)", placeholder="Ej: BLOQUE 5").upper()
+                apto = c_i3.text_input("Apto/Casa", placeholder="Ej: APTO 102").upper()
                 
                 if st.form_submit_button("💾 Guardar Inmueble", use_container_width=True):
                     if sel_prop and conjunto and apto:
                         id_contacto_real = int(sel_prop.split(" - ")[0])
+                        
+                        # Unimos el bloque y el apto inteligentemente
+                        nomenclatura = f"{bloque} {apto}".strip() if bloque else apto.strip()
+                        
                         try:
                             with conectar_bd() as conn_inm:
                                 conn_inm.cursor().execute(
                                     "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
-                                    (id_contacto_real, conjunto, apto)
+                                    (id_contacto_real, conjunto, nomenclatura)
                                 )
                                 conn_inm.commit()
-                            st.session_state['toast_msg'] = "Inmueble registrado correctamente."
+                            st.session_state['toast_msg'] = f"Inmueble {nomenclatura} registrado."
                             st.session_state['toast_icon'] = "🏠"
                             st.rerun()
                         except psycopg2.IntegrityError:
-                            st.error("⚠️ Este inmueble ya se encuentra registrado en ese conjunto residencial.")
+                            st.error("⚠️ Este inmueble ya se encuentra registrado.")
                     else:
-                        st.error("Por favor completa todos los campos.")
+                        st.error("Por favor completa el Conjunto y el Apto/Casa como mínimo.")
+            
+            # --- SECCIÓN DE CARGA MASIVA ---
+            st.markdown("---")
+            st.write("**📂 Carga Masiva de Inmuebles (Excel/CSV)**")
+            st.info("💡 Crea un CSV con 4 columnas exactas: cedula, conjunto, bloque, apartamento. Si es una casa sin bloque, deja la celda de bloque vacía.")
+            
+            archivo_csv = st.file_uploader("Sube tu archivo CSV aquí:", type=["csv"])
+
+            if archivo_csv and st.button("🚀 Procesar Carga Masiva", use_container_width=True):
+                try:
+                    import pandas as pd
+                    import math
+                    df_carga = pd.read_csv(archivo_csv, sep=None, engine='python')
+                    
+                    # Limpiamos los nombres de las columnas por si tienen espacios
+                    df_carga.columns = df_carga.columns.str.strip().str.lower()
+                    
+                    if not all(col in df_carga.columns for col in ['cedula', 'conjunto', 'bloque', 'apartamento']):
+                        st.error("❌ El archivo debe tener las columnas exactas: cedula, conjunto, bloque, apartamento")
+                    else:
+                        inmuebles_creados = 0
+                        errores = 0
+                        
+                        with conectar_bd() as conn_masiva:
+                            cursor = conn_masiva.cursor()
+                            
+                            for index, row in df_carga.iterrows():
+                                # Validamos que haya cédula, conjunto y apto (el bloque es opcional)
+                                if pd.isna(row['cedula']) or pd.isna(row['conjunto']) or pd.isna(row['apartamento']):
+                                    errores += 1
+                                    continue
+                                    
+                                cedula_limpia = limpiar_identificacion(str(row['cedula']))
+                                
+                                # Extraemos bloque y apto manejando los valores nulos de pandas
+                                b_val = str(row['bloque']).strip().upper() if pd.notna(row['bloque']) else ""
+                                a_val = str(row['apartamento']).strip().upper()
+                                
+                                if b_val == "NAN": b_val = ""
+                                if a_val == "NAN": a_val = ""
+                                
+                                nomenclatura_csv = f"{b_val} {a_val}".strip() if b_val else a_val.strip()
+                                
+                                # 1. Buscar el ID real del contacto
+                                cursor.execute("SELECT id FROM contactos WHERE identificacion = %s", (cedula_limpia,))
+                                resultado = cursor.fetchone()
+                                
+                                if resultado:
+                                    contacto_id_real = resultado[0]
+                                    try:
+                                        # 2. Insertar el inmueble
+                                        cursor.execute(
+                                            "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
+                                            (contacto_id_real, str(row['conjunto']).strip().upper(), nomenclatura_csv)
+                                        )
+                                        inmuebles_creados += 1
+                                    except psycopg2.IntegrityError:
+                                        conn_masiva.rollback() 
+                                        errores += 1
+                                        continue
+                                else:
+                                    errores += 1
+                                    
+                            conn_masiva.commit()
+                            
+                        st.session_state['toast_msg'] = f"Carga masiva finalizada: {inmuebles_creados} exitosos, {errores} omitidos."
+                        st.session_state['toast_icon'] = "✅"
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Error procesando el archivo. Asegúrate de que sea un CSV válido. Detalle: {e}")
 
         with sub_ph2:
             with st.form("form_nueva_expensa", clear_on_submit=True):
