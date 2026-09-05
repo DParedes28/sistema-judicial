@@ -1063,28 +1063,116 @@ elif menu == "Directorio":
             st.dataframe(df_cont.drop(columns=['id']), use_container_width=True)
 
 # ==========================================
-# SECCIÓN EXTRA: CARTERA PRE-JURÍDICA
+# SECCIÓN EXTRA: CARTERA Y PROPIEDAD HORIZONTAL
 # ==========================================
 elif menu == "Cartera":
-    st.header("Módulo de Recuperación Pre-jurídica")
+    st.header("Módulo de Recuperación y Propiedad Horizontal")
     
     with conectar_bd() as conn:
         df_ob = pd.read_sql_query("SELECT * FROM obligaciones WHERE estado != 'Pagada'", conn)
-        total_capital = df_ob['capital'].sum() if not df_ob.empty else 0.0
+        total_capital_ob = df_ob['capital'].sum() if not df_ob.empty else 0.0
         total_obligaciones = len(df_ob)
         
+        # Métrica global incluyendo la nueva tabla de PH
+        try:
+            df_ph = pd.read_sql_query("SELECT * FROM expensas_ph WHERE estado != 'Pagada'", conn)
+            total_capital_ph = df_ph['valor_capital'].sum() if not df_ph.empty else 0.0
+        except:
+            total_capital_ph = 0.0
+            
     c_k1, c_k2, c_k3 = st.columns(3)
     with c_k1:
-        st.markdown(f"<div class='metric-card'><h2 style='color:#30d158;margin:0;font-size:28px;'>${total_capital:,.0f}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Capital en Cobro</p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><h2 style='color:#30d158;margin:0;font-size:28px;'>${(total_capital_ob + total_capital_ph):,.0f}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Capital Total en Cobro</p></div>", unsafe_allow_html=True)
     with c_k2:
-        st.markdown(f"<div class='metric-card'><h2 style='color:#0a84ff;margin:0;font-size:28px;'>{total_obligaciones}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Obligaciones Activas</p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><h2 style='color:#0a84ff;margin:0;font-size:28px;'>{total_obligaciones}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Títulos (Comercial)</p></div>", unsafe_allow_html=True)
         
     st.markdown("---")
     
-    tab_ingreso, tab_gestion, tab_promesas = st.tabs(["📥 Radicar Obligación", "📞 Gestión y CRM", "🗓️ Promesas de Pago"])
+    # 📌 NUEVA ESTRUCTURA DE PESTAÑAS (Integrando PH)
+    tab_ph, tab_ingreso, tab_gestion, tab_promesas = st.tabs(["🏢 Propiedad Horizontal", "📥 Cartera Comercial", "📞 Gestión y CRM", "🗓️ Promesas de Pago"])
     
+    # ==========================================
+    # PESTAÑA: PROPIEDAD HORIZONTAL
+    # ==========================================
+    with tab_ph:
+        st.subheader("Gestión de Cartera - Propiedad Horizontal")
+        
+        sub_ph1, sub_ph2, sub_ph3 = st.tabs(["🏠 1. Registrar Inmueble", "📝 2. Cargar Expensas (Mora)", "🧮 3. Liquidador (Próximamente)"])
+        
+        with sub_ph1:
+            with st.form("form_nuevo_inmueble", clear_on_submit=True):
+                st.write("**Vincular Inmueble a un Contacto Existente**")
+                df_contactos = cargar_contactos_general()
+                # Extraemos el ID real y el nombre para la llave foránea
+                lista_propietarios = [f"{r['id']} - {r['identificacion']} - {r['nombre']}" for i, r in df_contactos.iterrows()] if not df_contactos.empty else []
+                
+                sel_prop = st.selectbox("Seleccione el Propietario (Directorio)", lista_propietarios)
+                
+                c_i1, c_i2 = st.columns(2)
+                conjunto = c_i1.text_input("Conjunto Residencial / Edificio").upper()
+                apto = c_i2.text_input("Torre y Apartamento / Local").upper()
+                
+                if st.form_submit_button("💾 Guardar Inmueble", use_container_width=True):
+                    if sel_prop and conjunto and apto:
+                        id_contacto_real = int(sel_prop.split(" - ")[0])
+                        try:
+                            with conectar_bd() as conn_inm:
+                                conn_inm.cursor().execute(
+                                    "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
+                                    (id_contacto_real, conjunto, apto)
+                                )
+                                conn_inm.commit()
+                            st.session_state['toast_msg'] = "Inmueble registrado correctamente."
+                            st.session_state['toast_icon'] = "🏠"
+                            st.rerun()
+                        except psycopg2.IntegrityError:
+                            st.error("⚠️ Este inmueble ya se encuentra registrado en ese conjunto residencial.")
+                    else:
+                        st.error("Por favor completa todos los campos.")
+
+        with sub_ph2:
+            with st.form("form_nueva_expensa", clear_on_submit=True):
+                st.write("**Cargar meses en mora a un inmueble**")
+                with conectar_bd() as conn_i:
+                    try:
+                        df_inmuebles = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_i)
+                        lista_inms = [f"{r['id']} - {r['conjunto_residencial']} {r['torre_apto']} ({r['nombre']})" for _, r in df_inmuebles.iterrows()] if not df_inmuebles.empty else []
+                    except:
+                        lista_inms = []
+                
+                sel_inmueble = st.selectbox("Seleccione el Inmueble", lista_inms)
+                concepto_ph = st.selectbox("Concepto", ["Expensa Ordinaria", "Cuota Extraordinaria", "Multa / Sanción", "Otro"])
+                
+                c_e1, c_e2, c_e3 = st.columns(3)
+                mes_ph = c_e1.number_input("Mes (1-12)", min_value=1, max_value=12, value=datetime.now().month)
+                anio_ph = c_e2.number_input("Año", min_value=2000, max_value=2100, value=datetime.now().year)
+                capital_ph = c_e3.number_input("Valor Capital ($)", min_value=0.0, step=10000.0)
+                
+                fv_ph = st.date_input("Fecha de Vencimiento de la Cuota")
+                
+                if st.form_submit_button("💾 Añadir Obligación al Inmueble", use_container_width=True):
+                    if sel_inmueble and capital_ph > 0:
+                        id_inmueble_real = int(sel_inmueble.split(" - ")[0])
+                        with conectar_bd() as conn_exp:
+                            conn_exp.cursor().execute(
+                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
+                                (id_inmueble_real, concepto_ph, mes_ph, anio_ph, capital_ph, str(fv_ph))
+                            )
+                            conn_exp.commit()
+                        st.session_state['toast_msg'] = f"Expensa de {mes_ph}/{anio_ph} cargada."
+                        st.session_state['toast_icon'] = "✅"
+                        st.rerun()
+                    else:
+                        st.error("Seleccione un inmueble e ingrese un valor de capital válido.")
+                        
+        with sub_ph3:
+            st.info("🚧 Aquí construiremos el Motor de Liquidación Automática en Python que cruzará el capital con la tabla `historico_tasas` y se conectará con Gemini para redactar los cobros.")
+
+    # ==========================================
+    # PESTAÑA: INGRESO CARTERA COMERCIAL (Genérica)
+    # ==========================================
     with tab_ingreso:
-        st.subheader("Registrar Nuevo Título Valor")
+        st.subheader("Registrar Título Valor (Pagarés, Letras, Facturas)")
         with st.form("form_nueva_obligacion", clear_on_submit=True):
             df_contactos = cargar_contactos_general()
             lista_deudores = [f"{r['identificacion']} - {r['nombre']}" for i, r in df_contactos.iterrows() if r['identificacion']] if not df_contactos.empty else []
@@ -1096,7 +1184,7 @@ elif menu == "Cartera":
             cap_t = col_o2.number_input("Capital Adeudado ($)", min_value=0.0, step=100000.0)
             f_exigible = st.date_input("Fecha de Exigibilidad (Vencimiento del plazo)")
             
-            if st.form_submit_button("💾 Ingresar a Cartera", use_container_width=True):
+            if st.form_submit_button("💾 Ingresar a Cartera Comercial", use_container_width=True):
                 if sel_deudor and cap_t > 0:
                     id_deudor = sel_deudor.split(" - ")[0]
                     with conectar_bd() as conn_ob:
@@ -1105,12 +1193,16 @@ elif menu == "Cartera":
                             (id_deudor, tipo_t, cap_t, str(f_exigible))
                         )
                         conn_ob.commit()
-                    st.success("✅ Obligación radicada exitosamente en etapa pre-jurídica.")
+                    st.session_state['toast_msg'] = "Obligación radicada exitosamente."
+                    st.session_state['toast_icon'] = "📥"
                     st.rerun()
 
+    # ==========================================
+    # PESTAÑA: GESTIÓN Y CRM
+    # ==========================================
     with tab_gestion:
         if df_ob.empty:
-            st.info("No hay obligaciones activas en cobro pre-jurídico.")
+            st.info("No hay obligaciones comerciales activas en cobro pre-jurídico.")
         else:
             df_ob['fecha_exigibilidad'] = pd.to_datetime(df_ob['fecha_exigibilidad'])
             df_ob['dias_mora'] = (pd.Timestamp.now() - df_ob['fecha_exigibilidad']).dt.days
@@ -1144,7 +1236,6 @@ elif menu == "Cartera":
                         resumen = st.text_area("Resultado de la gestión")
                         hay_promesa = st.checkbox("¿Se logró una promesa de pago?")
                         fecha_promesa = st.date_input("Fecha de la promesa", disabled=not hay_promesa)
-                        
                         pasar_juridico = st.checkbox("🚨 Agotar etapa y trasladar a Jurídico")
                         
                         if st.form_submit_button("💾 Guardar Gestión"):
@@ -1158,7 +1249,6 @@ elif menu == "Cartera":
                                 cur.execute("UPDATE obligaciones SET estado = %s WHERE id = %s", (nuevo_estado, id_ob_sel))
                                 conn_g.commit()
                                 
-                            st.success("Gestión registrada.")
                             st.rerun()
                 
                 with col_c2:
@@ -1178,6 +1268,9 @@ elif menu == "Cartera":
                             </div>
                             """, unsafe_allow_html=True)
 
+    # ==========================================
+    # PESTAÑA: PROMESAS DE PAGO
+    # ==========================================
     with tab_promesas:
         st.subheader("Promesas de Pago Activas")
         with conectar_bd() as conn_p:
