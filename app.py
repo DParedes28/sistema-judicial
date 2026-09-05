@@ -1493,7 +1493,9 @@ elif menu == "Cartera":
                             if "Fija" in tipo_tasa:
                                 # Tasa fijada por asamblea (mensual comercial).
                                 tasa_decimal_mes = tasa_input / 100.0
-                                str_tasa = f"{tasa_input}%"
+                                # Como es fija mensual, la tasa diaria es esa mensual / 30
+                                tasa_diaria_aprox = (tasa_input / 30.0)
+                                str_tasa = f"{tasa_input}% (Diaria: {tasa_diaria_aprox:.4f}%)"
                                 if cap_acumulado > 0:
                                     interes_mes = cap_acumulado * tasa_decimal_mes * (dias / 30.0)
                                 else:
@@ -1502,7 +1504,8 @@ elif menu == "Cartera":
                                 tasa_ea = obtener_tasa_sf(y, m)
                                 # FÓRMULA LEGAL JUZGADOS: Efectiva Anual a Efectiva Diaria (Base 365 días)
                                 tasa_efectiva_diaria = ((1 + tasa_ea) ** (1/365)) - 1
-                                str_tasa = f"SF: {(tasa_ea*100):.2f}% E.A."
+                                # Formateamos la cadena para mostrar tanto la EA como la Diaria
+                                str_tasa = f"SF: {(tasa_ea*100):.2f}% E.A. (Diaria: {(tasa_efectiva_diaria*100):.4f}%)"
                                 
                                 # Interés mes a mes basado estrictamente en los días CALENDARIO exactos
                                 if cap_acumulado > 0:
