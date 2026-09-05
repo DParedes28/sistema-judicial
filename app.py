@@ -1332,12 +1332,56 @@ elif menu == "Cartera":
         with sub_ph3:
             st.write("**Liquidación Matemática de Deuda (Estado de Cuenta)**")
             
-            with st.expander("⚖️ Sobre la Tasa de Interés y la Superfinanciera (Leer)"):
-                st.markdown("""
-                **Marco Legal (Ley 675/01 Art. 30):** La tasa oficial es 1.5 veces el IBC certificado por la Superfinanciera, el cual fluctúa cada mes. 
-                Sin embargo, el sistema te permite ingresar una **Tasa Fija Personalizada** para igualar actas de asamblea o acuerdos de cobro pre-jurídico (Ej: 2.5% mensual).
-                """)
-            
+            # --- CONEXIÓN EN TIEMPO REAL A DATOS.GOV.CO (GOBIERNO DE COLOMBIA) ---
+            if 'historico_superfinanciera' not in st.session_state:
+                import requests
+                import pandas as pd
+                try:
+                    # Endpoint oficial de la Superintendencia Financiera en Datos Abiertos
+                    url = "https://www.datos.gov.co/resource/pare-7x5i.json?$limit=5000"
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code == 200:
+                        df_sf = pd.DataFrame(resp.json())
+                        # Encontrar columnas dinámicamente
+                        c_mod = next((c for c in df_sf.columns if 'modalidad' in c.lower()), None)
+                        c_des = next((c for c in df_sf.columns if 'desde' in c.lower()), 'vigencia_desde')
+                        c_has = next((c for c in df_sf.columns if 'hasta' in c.lower()), 'vigencia_hasta')
+                        c_val = next((c for c in df_sf.columns if 'valor' in c.lower() or 'tasa' in c.lower()), 'valor')
+                        
+                        # Filtrar el IBC de Consumo y Ordinario (Aplicable a Propiedad Horizontal)
+                        if c_mod:
+                            df_sf = df_sf[df_sf[c_mod].str.contains("Consumo", case=False, na=False)]
+                            
+                        df_sf['fecha_inicio'] = pd.to_datetime(df_sf[c_des])
+                        df_sf['fecha_fin'] = pd.to_datetime(df_sf[c_has])
+                        df_sf['tasa_ibc'] = df_sf[c_val].astype(str).str.replace(',', '.').str.replace('%', '').astype(float)
+                        
+                        # MATEMÁTICA LEGAL: Usura = Interés Bancario Corriente (IBC) x 1.5
+                        df_sf['tasa_usura_ea'] = df_sf['tasa_ibc'].apply(lambda x: (x / 100.0) * 1.5 if x > 1 else x * 1.5)
+                        
+                        st.session_state['historico_superfinanciera'] = df_sf[['fecha_inicio', 'fecha_fin', 'tasa_usura_ea']]
+                    else:
+                        st.session_state['historico_superfinanciera'] = None
+                except Exception as e:
+                    st.session_state['historico_superfinanciera'] = None
+
+            def obtener_tasa_sf(y, m):
+                df_t = st.session_state.get('historico_superfinanciera')
+                if df_t is None or df_t.empty:
+                    return 0.28 # Fallback de emergencia (28% EA) si no hay internet
+                
+                # Buscar la tasa correspondiente al mes/año que se está liquidando
+                fecha_b = pd.to_datetime(f"{y}-{m:02d}-15")
+                fila = df_t[(df_t['fecha_inicio'] <= fecha_b) & (df_t['fecha_fin'] >= fecha_b)]
+                
+                if not fila.empty:
+                    return fila.iloc[0]['tasa_usura_ea']
+                elif fecha_b < df_t['fecha_inicio'].min():
+                    return df_t.sort_values('fecha_inicio').iloc[0]['tasa_usura_ea'] # Si es muy antigua
+                else:
+                    return df_t.sort_values('fecha_fin').iloc[-1]['tasa_usura_ea'] # Si es del mes actual/futuro
+
+            # --- INTERFAZ DEL LIQUIDADOR ---
             with conectar_bd() as conn_i:
                 try:
                     df_inmuebles_liq = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_i)
@@ -1350,12 +1394,23 @@ elif menu == "Cartera":
             st.markdown("---")
             st.write("**Configuración de la Liquidación**")
             
+            tipo_tasa = st.radio("¿Qué tasa de interés de mora deseas aplicar?", 
+                                 ["Tasa Superfinanciera Fluctuante (Máxima Legal Ley 675 - Tiempo Real)", 
+                                  "Tasa Fija Personalizada (Acta de Asamblea / Acuerdo)"],
+                                 key="radio_tipo_tasa")
+            
             import datetime
             import calendar
             
             c_l1, c_l2, c_l3, c_l4 = st.columns(4)
-            tasa_input = c_l1.number_input("Tasa Mora Mensual (%)", value=2.5, step=0.1, help="Ej: 2.5% = 0.025", key="tasa_liq")
-            honorarios_pct = c_l2.number_input("Honorarios (%)", value=23.8, step=0.1, help="En tu Excel usas 23.8% (equivale a 20% + IVA)", key="hon_liq")
+            
+            if "Fija" in tipo_tasa:
+                tasa_input = c_l1.number_input("Tasa Mora Mensual (%)", value=2.5, step=0.1, help="Ej: 2.5% mensual = 0.025", key="tasa_liq")
+            else:
+                c_l1.info("📊 El sistema extraerá la tasa en tiempo real del Banco de la República / Superfinanciera.")
+                tasa_input = 0 
+                
+            honorarios_pct = c_l2.number_input("Honorarios (%)", value=23.8, step=0.1, help="Equivale a 20% + IVA", key="hon_liq")
             gastos_cobranza = c_l3.number_input("Gastos Cobranza ($)", value=150000.0, step=10000.0, key="gastos_liq")
             fecha_corte = c_l4.date_input("Fecha de Corte", value=datetime.date.today(), help="Hasta qué día se calculan intereses", key="fecha_liq")
             
@@ -1381,7 +1436,6 @@ elif menu == "Cartera":
                         
                         df_agrupado = df_agrupado.sort_values(by=['periodo_anio', 'periodo_mes'])
                         
-                        tasa_decimal = tasa_input / 100.0
                         resultados = []
                         cap_acumulado = 0
                         int_acumulado = 0
@@ -1413,8 +1467,18 @@ elif menu == "Cartera":
                             cap_mes = ord_val + ext_val
                             cap_acumulado += cap_mes
                             
+                            # --- LÓGICA INTELIGENTE DE TASA ---
+                            if "Fija" in tipo_tasa:
+                                tasa_decimal_mes = tasa_input / 100.0
+                                str_tasa = f"{tasa_input}%"
+                            else:
+                                tasa_ea = obtener_tasa_sf(y, m)
+                                # Conversión Financiera Legal: Efectiva Anual (E.A.) a Efectiva Mensual (E.M.)
+                                tasa_decimal_mes = ((1 + tasa_ea) ** (1/12)) - 1
+                                str_tasa = f"SF: {(tasa_decimal_mes*100):.2f}%"
+                            
                             if cap_acumulado > 0:
-                                interes_mes = cap_acumulado * tasa_decimal * (dias / 30.0)
+                                interes_mes = cap_acumulado * tasa_decimal_mes * (dias / 30.0)
                             else:
                                 interes_mes = 0
                                 
@@ -1424,7 +1488,7 @@ elif menu == "Cartera":
                             resultados.append({
                                 'Desde': desde.strftime('%Y-%m-%d'),
                                 'Hasta': hasta.strftime('%Y-%m-%d'),
-                                '% Int Mora': f"{tasa_input}%",
+                                '% Int Mora': str_tasa,
                                 'ORDINARIAS': ord_val if ord_val > 0 else None,
                                 'EXTRAORDINARIAS': ext_val if ext_val > 0 else None,
                                 'Capital Liquidable': cap_acumulado if cap_acumulado > 0 else None,
