@@ -1153,11 +1153,18 @@ elif menu == "Cartera":
 
             if archivo_csv and st.button("🚀 Procesar Carga Masiva", use_container_width=True):
                 try:
-                    df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python', encoding='latin-1')
-                    df_carga.columns = df_carga.columns.str.strip().str.lower()
+                    # 1. Leer archivo intentando detectar la codificación automáticamente
+                    try:
+                        df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python', encoding='utf-8-sig')
+                    except Exception:
+                        archivo_csv.seek(0)
+                        df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python', encoding='latin-1')
+                    
+                    # 2. LIMPIEZA EXTREMA: Quitamos cualquier símbolo invisible, tilde o espacio de los títulos
+                    df_carga.columns = df_carga.columns.str.replace(r'[^a-zA-Z]', '', regex=True).str.lower()
                     
                     if not all(col in df_carga.columns for col in ['cedula', 'conjunto', 'bloque', 'apartamento']):
-                        st.error(f"❌ Faltan columnas clave. Asegúrate de usar la plantilla.")
+                        st.error(f"❌ Error de formato. Columnas leídas por el sistema: {list(df_carga.columns)}")
                     else:
                         inmuebles_creados = 0
                         errores = 0
@@ -1193,7 +1200,7 @@ elif menu == "Cartera":
                                         (str(row['conjunto']).strip().upper(), nomenclatura_csv)
                                     )
                                     if cursor.fetchone():
-                                        errores += 1 # Ya existe, lo saltamos y protegemos a los demás
+                                        errores += 1 # Ya existe, lo saltamos
                                         continue
                                         
                                     try:
@@ -1201,7 +1208,7 @@ elif menu == "Cartera":
                                             "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
                                             (contacto_id_real, str(row['conjunto']).strip().upper(), nomenclatura_csv)
                                         )
-                                        conn_masiva.commit() # Guardamos de forma individual
+                                        conn_masiva.commit()
                                         inmuebles_creados += 1
                                     except Exception:
                                         conn_masiva.rollback() 
@@ -1210,7 +1217,7 @@ elif menu == "Cartera":
                                 else:
                                     errores += 1
                                     
-                        st.session_state['toast_msg'] = f"Carga masiva finalizada: {inmuebles_creados} exitosos, {errores} omitidos (por duplicado o cédula no encontrada)."
+                        st.session_state['toast_msg'] = f"Carga masiva finalizada: {inmuebles_creados} exitosos, {errores} omitidos."
                         st.session_state['toast_icon'] = "✅"
                         st.rerun()
                         
