@@ -1103,9 +1103,8 @@ elif menu == "Cartera":
             with st.form("form_nuevo_inmueble", clear_on_submit=True):
                 st.write("**Vincular Inmueble a un Contacto Existente**")
                 df_contactos = cargar_contactos_general()
-                # Extraemos el ID real y el nombre para la llave foránea
-                lista_propietarios = [f"{r['id']} - {r['identificacion']} - {r['nombre']}" for i, r in df_contactos.iterrows()] if not df_contactos.empty else []
                 
+                lista_propietarios = [f"{r['id']} - {r['identificacion']} - {r['nombre']}" for i, r in df_contactos.iterrows()] if not df_contactos.empty else []
                 sel_prop = st.selectbox("Seleccione el Propietario (Directorio)", lista_propietarios)
                 
                 c_i1, c_i2, c_i3 = st.columns([2, 1, 1])
@@ -1116,8 +1115,6 @@ elif menu == "Cartera":
                 if st.form_submit_button("💾 Guardar Inmueble", use_container_width=True):
                     if sel_prop and conjunto and apto:
                         id_contacto_real = int(sel_prop.split(" - ")[0])
-                        
-                        # Unimos el bloque y el apto inteligentemente
                         nomenclatura = f"{bloque} {apto}".strip() if bloque else apto.strip()
                         
                         try:
@@ -1135,12 +1132,11 @@ elif menu == "Cartera":
                     else:
                         st.error("Por favor completa el Conjunto y el Apto/Casa como mínimo.")
             
-            # --- SECCIÓN DE CARGA MASIVA CON PLANTILLA ---
+            # --- SECCIÓN DE CARGA MASIVA ---
             st.markdown("---")
             st.write("**📂 Carga Masiva de Inmuebles (Excel/CSV)**")
             
             import pandas as pd
-            # 1. Botón para generar y descargar la plantilla vacía
             df_plantilla = pd.DataFrame(columns=['cedula', 'conjunto', 'bloque', 'apartamento'])
             csv_plantilla = df_plantilla.to_csv(index=False).encode('utf-8')
             
@@ -1153,21 +1149,15 @@ elif menu == "Cartera":
             )
             
             st.info("💡 Descarga la plantilla, llénala en Excel, guárdala y súbela aquí abajo:")
-            
-            # 2. Subida del archivo
             archivo_csv = st.file_uploader("Sube tu archivo CSV lleno aquí:", type=["csv"])
 
             if archivo_csv and st.button("🚀 Procesar Carga Masiva", use_container_width=True):
                 try:
-                    import math
-                    # Forzamos a pandas a intentar leer con coma o punto y coma usando una expresión regular
-                    df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python')
-                    
-                    # Limpiamos los nombres de las columnas por si tienen espacios
+                    df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python', encoding='latin-1')
                     df_carga.columns = df_carga.columns.str.strip().str.lower()
                     
                     if not all(col in df_carga.columns for col in ['cedula', 'conjunto', 'bloque', 'apartamento']):
-                        st.error(f"❌ Columnas detectadas: {list(df_carga.columns)}. Se requieren: ['cedula', 'conjunto', 'bloque', 'apartamento']. Revisa tu archivo.")
+                        st.error(f"❌ Faltan columnas clave. Asegúrate de usar la plantilla.")
                     else:
                         inmuebles_creados = 0
                         errores = 0
@@ -1180,10 +1170,11 @@ elif menu == "Cartera":
                                     errores += 1
                                     continue
                                     
-                                cedula_limpia = limpiar_identificacion(str(row['cedula']))
+                                # Limpiamos los datos cortando los decimales ocultos de Excel (.0)
+                                cedula_limpia = limpiar_identificacion(str(row['cedula']).split('.')[0])
                                 
-                                b_val = str(row['bloque']).strip().upper() if pd.notna(row['bloque']) else ""
-                                a_val = str(row['apartamento']).strip().upper()
+                                b_val = str(row['bloque']).split('.')[0].strip().upper() if pd.notna(row['bloque']) else ""
+                                a_val = str(row['apartamento']).split('.')[0].strip().upper()
                                 
                                 if b_val == "NAN" or b_val == "NONE": b_val = ""
                                 if a_val == "NAN" or a_val == "NONE": a_val = ""
@@ -1195,27 +1186,36 @@ elif menu == "Cartera":
                                 
                                 if resultado:
                                     contacto_id_real = resultado[0]
+                                    
+                                    # INTELIGENCIA AÑADIDA: Mirar si ya existe ANTES de intentar insertarlo
+                                    cursor.execute(
+                                        "SELECT id FROM inmuebles_ph WHERE conjunto_residencial = %s AND torre_apto = %s", 
+                                        (str(row['conjunto']).strip().upper(), nomenclatura_csv)
+                                    )
+                                    if cursor.fetchone():
+                                        errores += 1 # Ya existe, lo saltamos y protegemos a los demás
+                                        continue
+                                        
                                     try:
                                         cursor.execute(
                                             "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
                                             (contacto_id_real, str(row['conjunto']).strip().upper(), nomenclatura_csv)
                                         )
+                                        conn_masiva.commit() # Guardamos de forma individual
                                         inmuebles_creados += 1
-                                    except psycopg2.IntegrityError:
+                                    except Exception:
                                         conn_masiva.rollback() 
                                         errores += 1
                                         continue
                                 else:
                                     errores += 1
                                     
-                            conn_masiva.commit()
-                            
-                        st.session_state['toast_msg'] = f"Carga masiva finalizada: {inmuebles_creados} exitosos, {errores} omitidos."
+                        st.session_state['toast_msg'] = f"Carga masiva finalizada: {inmuebles_creados} exitosos, {errores} omitidos (por duplicado o cédula no encontrada)."
                         st.session_state['toast_icon'] = "✅"
                         st.rerun()
                         
                 except Exception as e:
-                    st.error(f"Error procesando el archivo. Asegúrate de que sea un CSV válido. Detalle: {e}")
+                    st.error(f"Error procesando el archivo: {e}")
 
         with sub_ph2:
             with st.form("form_nueva_expensa", clear_on_submit=True):
