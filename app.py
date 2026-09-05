@@ -1225,139 +1225,114 @@ elif menu == "Cartera":
                     st.error(f"Error procesando el archivo: {e}")
 
         with sub_ph2:
-            with st.form("form_nueva_expensa", clear_on_submit=True):
-                st.write("**Cargar meses en mora a un inmueble (Manual)**")
-                with conectar_bd() as conn_i:
-                    try:
-                        df_inmuebles = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_i)
-                        lista_inms = [f"{r['id']} - {r['conjunto_residencial']} {r['torre_apto']} ({r['nombre']})" for _, r in df_inmuebles.iterrows()] if not df_inmuebles.empty else []
-                    except:
-                        lista_inms = []
-                
-                sel_inmueble = st.selectbox("Seleccione el Inmueble", lista_inms)
-                concepto_ph = st.selectbox("Concepto", ["Expensa Ordinaria", "Cuota Extraordinaria", "Multa / Sanción", "Otro"])
-                
-                from datetime import datetime
-                c_e1, c_e2, c_e3 = st.columns(3)
-                mes_ph = c_e1.number_input("Mes (1-12)", min_value=1, max_value=12, value=datetime.now().month)
-                anio_ph = c_e2.number_input("Año", min_value=2000, max_value=2100, value=datetime.now().year)
-                capital_ph = c_e3.number_input("Valor Capital ($)", min_value=0.0, step=10000.0)
-                
-                fv_ph = st.date_input("Fecha de Vencimiento de la Cuota")
-                
-                if st.form_submit_button("💾 Añadir Obligación al Inmueble", use_container_width=True):
-                    if sel_inmueble and capital_ph > 0:
-                        id_inmueble_real = int(sel_inmueble.split(" - ")[0])
-                        with conectar_bd() as conn_exp:
-                            conn_exp.cursor().execute(
-                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
-                                (id_inmueble_real, concepto_ph, mes_ph, anio_ph, capital_ph, str(fv_ph))
-                            )
-                            conn_exp.commit()
-                        st.session_state['toast_msg'] = f"Expensa de {mes_ph}/{anio_ph} cargada."
-                        st.session_state['toast_icon'] = "✅"
-                        st.rerun()
-                    else:
-                        st.error("Seleccione un inmueble e ingrese un valor de capital válido.")
-
-            # --- SECCIÓN DE CARGA MASIVA DE DEUDAS ---
-            st.markdown("---")
-            st.write("**📂 Carga Masiva de Deudas (Excel/CSV)**")
+            st.write("**Cargar Estado de Cuenta al Inmueble**")
             
-            import pandas as pd
-            # Plantilla con las columnas necesarias para las finanzas
-            df_plantilla_exp = pd.DataFrame(columns=['conjunto', 'bloque', 'apartamento', 'concepto', 'mes', 'anio', 'capital', 'fecha_vencimiento'])
-            csv_plantilla_exp = df_plantilla_exp.to_csv(index=False).encode('utf-8')
-            
-            st.download_button(
-                label="⬇️ Descargar Plantilla de Expensas (.csv)",
-                data=csv_plantilla_exp,
-                file_name="plantilla_expensas.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-            
-            st.info("💡 Sugerencias: En 'concepto' pon 'Expensa Ordinaria'. La 'fecha_vencimiento' debe ir en formato YYYY-MM-DD (Ej: 2026-01-15).")
-            archivo_expensas = st.file_uploader("Sube tu archivo CSV de deudas aquí:", type=["csv"], key="uploader_expensas")
-
-            if archivo_expensas and st.button("🚀 Procesar Carga de Deudas", use_container_width=True):
+            # 1. Selector principal (común para todo)
+            with conectar_bd() as conn_i:
                 try:
-                    # Motor de lectura blindado (como el de inmuebles)
-                    try:
-                        df_carga_exp = pd.read_csv(archivo_expensas, sep=r'[,;]', engine='python', encoding='utf-8-sig')
-                    except Exception:
-                        archivo_expensas.seek(0)
-                        df_carga_exp = pd.read_csv(archivo_expensas, sep=r'[,;]', engine='python', encoding='latin-1')
-                    
-                    # Limpiamos títulos pero permitimos el guion bajo "_" para fecha_vencimiento
-                    df_carga_exp.columns = df_carga_exp.columns.str.replace(r'[^a-zA-Z_]', '', regex=True).str.lower()
-                    
-                    if not all(col in df_carga_exp.columns for col in ['conjunto', 'bloque', 'apartamento', 'concepto', 'mes', 'anio', 'capital', 'fecha_vencimiento']):
-                        st.error(f"❌ Error de formato. Revisa que el archivo tenga las 8 columnas de la plantilla oficial.")
+                    df_inmuebles = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_i)
+                    lista_inms = [f"{r['id']} - {r['conjunto_residencial']} {r['torre_apto']} ({r['nombre']})" for _, r in df_inmuebles.iterrows()] if not df_inmuebles.empty else []
+                except:
+                    lista_inms = []
+            
+            sel_inmueble = st.selectbox("1️⃣ Seleccione el Inmueble al que le cargaremos la deuda:", lista_inms)
+            st.markdown("---")
+            
+            col_izq, col_der = st.columns(2)
+            
+            with col_izq:
+                st.write("**Opción A: Subir Archivo de la Administración (.xls)**")
+                st.info("💡 Sube el archivo original que contiene las columnas 'Desde', 'Hasta', 'ORDINARIAS'. El sistema hará el resto.")
+                archivo_cuotas = st.file_uploader("2️⃣ Sube el Estado de Cuenta", type=["xls", "xlsx", "csv"], key="uploader_xls")
+                
+                if archivo_cuotas and st.button("🚀 Procesar Archivo Automáticamente", use_container_width=True):
+                    if not sel_inmueble:
+                        st.error("⚠️ Primero selecciona el inmueble en la parte superior.")
                     else:
-                        expensas_creadas = 0
-                        errores_exp = 0
-                        
-                        with conectar_bd() as conn_masiva_exp:
-                            cursor_exp = conn_masiva_exp.cursor()
+                        try:
+                            id_inm_real = int(sel_inmueble.split(" - ")[0])
+                            import pandas as pd
                             
-                            for index, row in df_carga_exp.iterrows():
-                                if pd.isna(row['conjunto']) or pd.isna(row['apartamento']) or pd.isna(row['capital']):
-                                    errores_exp += 1
-                                    continue
-                                    
-                                # Reconstruir nombre del apartamento (igual que al crearlos)
-                                b_val = str(row['bloque']).split('.')[0].strip().upper() if pd.notna(row['bloque']) else ""
-                                a_val = str(row['apartamento']).split('.')[0].strip().upper()
+                            # Leer el archivo dependiendo de su formato
+                            if archivo_cuotas.name.endswith('.csv'):
+                                df_c = pd.read_csv(archivo_cuotas)
+                            else:
+                                df_c = pd.read_excel(archivo_cuotas)
+                            
+                            # Limpieza para encontrar las columnas sin importar mayúsculas
+                            df_c.columns = df_c.columns.str.strip().str.upper()
+                            
+                            if 'DESDE' not in df_c.columns:
+                                st.error("❌ El archivo no parece ser el reporte de la administración. Falta la columna 'Desde'.")
+                            else:
+                                # Filtrar la fila de 'TOTAL' si viene en el Excel
+                                df_c = df_c[df_c['DESDE'].astype(str).str.upper() != 'TOTAL']
+                                df_c['DESDE'] = pd.to_datetime(df_c['DESDE'], errors='coerce')
                                 
-                                if b_val == "NAN" or b_val == "NONE": b_val = ""
-                                if a_val == "NAN" or a_val == "NONE": a_val = ""
+                                expensas_creadas = 0
                                 
-                                nomenclatura_csv = f"{b_val} {a_val}".strip() if b_val else a_val.strip()
-                                conjunto_csv = str(row['conjunto']).strip().upper()
+                                with conectar_bd() as conn_masiva_exp:
+                                    cursor = conn_masiva_exp.cursor()
+                                    
+                                    for idx, row in df_c.iterrows():
+                                        if pd.isna(row['DESDE']): continue
+                                        
+                                        mes = row['DESDE'].month
+                                        anio = row['DESDE'].year
+                                        fecha_v = row['DESDE'].strftime('%Y-%m-%d') # Usamos la fecha de inicio como corte
+                                        
+                                        # Procesar Cuotas ORDINARIAS
+                                        if 'ORDINARIAS' in df_c.columns and pd.notna(row['ORDINARIAS']) and float(row['ORDINARIAS']) > 0:
+                                            cursor.execute(
+                                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
+                                                (id_inm_real, 'Expensa Ordinaria', mes, anio, float(row['ORDINARIAS']), fecha_v)
+                                            )
+                                            expensas_creadas += 1
+                                            
+                                        # Procesar Cuotas EXTRAORDINARIAS (Si las hay)
+                                        if 'EXTRAORDINARIAS' in df_c.columns and pd.notna(row['EXTRAORDINARIAS']) and float(row['EXTRAORDINARIAS']) > 0:
+                                            cursor.execute(
+                                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
+                                                (id_inm_real, 'Cuota Extraordinaria', mes, anio, float(row['EXTRAORDINARIAS']), fecha_v)
+                                            )
+                                            expensas_creadas += 1
+                                            
+                                    conn_masiva_exp.commit()
+                                    
+                                st.session_state['toast_msg'] = f"¡Éxito! Se cargaron {expensas_creadas} cuotas exactas al inmueble."
+                                st.session_state['toast_icon'] = "✅"
+                                st.rerun()
                                 
-                                # 1. Buscar si el inmueble existe
-                                cursor_exp.execute("SELECT id FROM inmuebles_ph WHERE conjunto_residencial = %s AND torre_apto = %s", (conjunto_csv, nomenclatura_csv))
-                                res_inmueble = cursor_exp.fetchone()
-                                
-                                if res_inmueble:
-                                    inmueble_id_real = res_inmueble[0]
-                                    
-                                    # 2. Formatear y limpiar valores financieros
-                                    concepto = str(row['concepto']).strip() if pd.notna(row['concepto']) else "Expensa Ordinaria"
-                                    mes = int(float(row['mes'])) if pd.notna(row['mes']) else 1
-                                    anio = int(float(row['anio'])) if pd.notna(row['anio']) else 2026
-                                    capital = float(str(row['capital']).replace(',', '').replace('$', '')) if pd.notna(row['capital']) else 0.0
-                                    
-                                    try:
-                                        # Python intentará leer la fecha, si Excel la daña, usará el primer día del mes/año dado
-                                        fecha_v = pd.to_datetime(row['fecha_vencimiento'], errors='coerce')
-                                        if pd.isna(fecha_v):
-                                            fecha_v = pd.to_datetime(f"{anio}-{mes}-01")
-                                        fecha_v_str = fecha_v.strftime('%Y-%m-%d')
-                                    except:
-                                        fecha_v_str = pd.Timestamp.now().strftime('%Y-%m-%d')
-                                    
-                                    try:
-                                        # 3. Inyectar deuda
-                                        cursor_exp.execute(
-                                            "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
-                                            (inmueble_id_real, concepto, mes, anio, capital, fecha_v_str)
-                                        )
-                                        conn_masiva_exp.commit()
-                                        expensas_creadas += 1
-                                    except Exception:
-                                        conn_masiva_exp.rollback() 
-                                        errores_exp += 1
-                                else:
-                                    errores_exp += 1 # Inmueble no encontrado
-                                    
-                        st.session_state['toast_msg'] = f"Carga finalizada: {expensas_creadas} cuotas añadidas, {errores_exp} omitidas (inmueble no existe)."
-                        st.session_state['toast_icon'] = "💰"
-                        st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Error procesando el archivo: {e}")
+                        except Exception as e:
+                            st.error(f"Error procesando el archivo: {e}")
+
+            with col_der:
+                st.write("**Opción B: Carga Manual (1 a 1)**")
+                with st.form("form_nueva_expensa_manual", clear_on_submit=True):
+                    concepto_ph = st.selectbox("Concepto", ["Expensa Ordinaria", "Cuota Extraordinaria", "Multa / Sanción", "Otro"])
+                    
+                    from datetime import datetime
+                    c_e1, c_e2 = st.columns(2)
+                    mes_ph = c_e1.number_input("Mes (1-12)", min_value=1, max_value=12, value=datetime.now().month)
+                    anio_ph = c_e2.number_input("Año", min_value=2000, max_value=2100, value=datetime.now().year)
+                    capital_ph = st.number_input("Valor Capital ($)", min_value=0.0, step=10000.0)
+                    
+                    fv_ph = st.date_input("Fecha de Vencimiento de la Cuota")
+                    
+                    if st.form_submit_button("💾 Añadir Cuota Individual", use_container_width=True):
+                        if sel_inmueble and capital_ph > 0:
+                            id_inmueble_real = int(sel_inmueble.split(" - ")[0])
+                            with conectar_bd() as conn_exp:
+                                conn_exp.cursor().execute(
+                                    "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
+                                    (id_inmueble_real, concepto_ph, mes_ph, anio_ph, capital_ph, str(fv_ph))
+                                )
+                                conn_exp.commit()
+                            st.session_state['toast_msg'] = f"Expensa de {mes_ph}/{anio_ph} cargada."
+                            st.session_state['toast_icon'] = "✅"
+                            st.rerun()
+                        else:
+                            st.error("Seleccione un inmueble e ingrese un valor de capital válido.")
                         
         with sub_ph3:
             st.write("**🧮 Motor de Liquidación de Intereses a la Fecha**")
