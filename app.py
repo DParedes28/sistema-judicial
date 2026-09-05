@@ -1135,24 +1135,39 @@ elif menu == "Cartera":
                     else:
                         st.error("Por favor completa el Conjunto y el Apto/Casa como mínimo.")
             
-            # --- SECCIÓN DE CARGA MASIVA ---
+            # --- SECCIÓN DE CARGA MASIVA CON PLANTILLA ---
             st.markdown("---")
             st.write("**📂 Carga Masiva de Inmuebles (Excel/CSV)**")
-            st.info("💡 Crea un CSV con 4 columnas exactas: cedula, conjunto, bloque, apartamento. Si es una casa sin bloque, deja la celda de bloque vacía.")
             
-            archivo_csv = st.file_uploader("Sube tu archivo CSV aquí:", type=["csv"])
+            import pandas as pd
+            # 1. Botón para generar y descargar la plantilla vacía
+            df_plantilla = pd.DataFrame(columns=['cedula', 'conjunto', 'bloque', 'apartamento'])
+            csv_plantilla = df_plantilla.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="⬇️ Descargar Plantilla Oficial (.csv)",
+                data=csv_plantilla,
+                file_name="plantilla_inmuebles.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+            st.info("💡 Descarga la plantilla, llénala en Excel, guárdala y súbela aquí abajo:")
+            
+            # 2. Subida del archivo
+            archivo_csv = st.file_uploader("Sube tu archivo CSV lleno aquí:", type=["csv"])
 
             if archivo_csv and st.button("🚀 Procesar Carga Masiva", use_container_width=True):
                 try:
-                    import pandas as pd
                     import math
-                    df_carga = pd.read_csv(archivo_csv, sep=None, engine='python')
+                    # Forzamos a pandas a intentar leer con coma o punto y coma usando una expresión regular
+                    df_carga = pd.read_csv(archivo_csv, sep=r'[,;]', engine='python')
                     
                     # Limpiamos los nombres de las columnas por si tienen espacios
                     df_carga.columns = df_carga.columns.str.strip().str.lower()
                     
                     if not all(col in df_carga.columns for col in ['cedula', 'conjunto', 'bloque', 'apartamento']):
-                        st.error("❌ El archivo debe tener las columnas exactas: cedula, conjunto, bloque, apartamento")
+                        st.error(f"❌ Columnas detectadas: {list(df_carga.columns)}. Se requieren: ['cedula', 'conjunto', 'bloque', 'apartamento']. Revisa tu archivo.")
                     else:
                         inmuebles_creados = 0
                         errores = 0
@@ -1161,30 +1176,26 @@ elif menu == "Cartera":
                             cursor = conn_masiva.cursor()
                             
                             for index, row in df_carga.iterrows():
-                                # Validamos que haya cédula, conjunto y apto (el bloque es opcional)
                                 if pd.isna(row['cedula']) or pd.isna(row['conjunto']) or pd.isna(row['apartamento']):
                                     errores += 1
                                     continue
                                     
                                 cedula_limpia = limpiar_identificacion(str(row['cedula']))
                                 
-                                # Extraemos bloque y apto manejando los valores nulos de pandas
                                 b_val = str(row['bloque']).strip().upper() if pd.notna(row['bloque']) else ""
                                 a_val = str(row['apartamento']).strip().upper()
                                 
-                                if b_val == "NAN": b_val = ""
-                                if a_val == "NAN": a_val = ""
+                                if b_val == "NAN" or b_val == "NONE": b_val = ""
+                                if a_val == "NAN" or a_val == "NONE": a_val = ""
                                 
                                 nomenclatura_csv = f"{b_val} {a_val}".strip() if b_val else a_val.strip()
                                 
-                                # 1. Buscar el ID real del contacto
                                 cursor.execute("SELECT id FROM contactos WHERE identificacion = %s", (cedula_limpia,))
                                 resultado = cursor.fetchone()
                                 
                                 if resultado:
                                     contacto_id_real = resultado[0]
                                     try:
-                                        # 2. Insertar el inmueble
                                         cursor.execute(
                                             "INSERT INTO inmuebles_ph (contacto_id, conjunto_residencial, torre_apto) VALUES (%s, %s, %s)",
                                             (contacto_id_real, str(row['conjunto']).strip().upper(), nomenclatura_csv)
