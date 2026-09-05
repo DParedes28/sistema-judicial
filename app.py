@@ -1224,10 +1224,16 @@ elif menu == "Cartera":
                 except Exception as e:
                     st.error(f"Error procesando el archivo: {e}")
 
-        with sub_ph2:
-            st.write("**Cargar Estado de Cuenta al Inmueble**")
+        with sub_ph3:
+            st.write("**Liquidación Matemática de Deuda (Estado de Cuenta)**")
             
-            # 1. Selector principal (común para todo)
+            with st.expander("⚖️ Sobre la Tasa de Interés y la Superfinanciera (Leer)"):
+                st.markdown("""
+                **Marco Legal (Ley 675/01 Art. 30):** La tasa oficial es 1.5 veces el IBC certificado por la Superfinanciera, el cual fluctúa cada mes. 
+                Sin embargo, el sistema te permite ingresar una **Tasa Fija Personalizada** para igualar actas de asamblea o acuerdos de cobro pre-jurídico (Ej: 2.5% mensual).
+                """)
+            
+            # 1. Selector de Inmueble
             with conectar_bd() as conn_i:
                 try:
                     df_inmuebles = pd.read_sql_query("SELECT i.id, i.conjunto_residencial, i.torre_apto, c.nombre FROM inmuebles_ph i JOIN contactos c ON i.contacto_id = c.id", conn_i)
@@ -1235,104 +1241,133 @@ elif menu == "Cartera":
                 except:
                     lista_inms = []
             
-            sel_inmueble = st.selectbox("1️⃣ Seleccione el Inmueble al que le cargaremos la deuda:", lista_inms)
+            sel_inmueble = st.selectbox("Seleccione el Inmueble a Liquidar", lista_inms)
+            
             st.markdown("---")
+            st.write("**Configuración de la Liquidación**")
             
-            col_izq, col_der = st.columns(2)
+            import datetime
+            c_l1, c_l2, c_l3, c_l4 = st.columns(4)
+            # Aquí van las opciones personalizables que pediste, configuradas por defecto como tu Excel
+            tasa_input = c_l1.number_input("Tasa Mora Mensual (%)", value=2.5, step=0.1, help="Ej: 2.5% = 0.025")
+            honorarios_pct = c_l2.number_input("Honorarios (%)", value=23.8, step=0.1, help="En tu Excel usas 23.8% (equivale a 20% + IVA)")
+            gastos_cobranza = c_l3.number_input("Gastos Cobranza ($)", value=150000.0, step=10000.0)
+            fecha_corte = c_l4.date_input("Fecha de Corte", value=datetime.date.today(), help="Hasta qué día se calculan intereses")
             
-            with col_izq:
-                st.write("**Opción A: Subir Archivo de la Administración (.xls)**")
-                st.info("💡 Sube el archivo original que contiene las columnas 'Desde', 'Hasta', 'ORDINARIAS'. El sistema hará el resto.")
-                archivo_cuotas = st.file_uploader("2️⃣ Sube el Estado de Cuenta", type=["xls", "xlsx", "csv"], key="uploader_xls")
-                
-                if archivo_cuotas and st.button("🚀 Procesar Archivo Automáticamente", use_container_width=True):
-                    if not sel_inmueble:
-                        st.error("⚠️ Primero selecciona el inmueble en la parte superior.")
+            if st.button("⚡ Generar Estado de Cuenta", use_container_width=True):
+                if not sel_inmueble:
+                    st.error("Seleccione un inmueble.")
+                else:
+                    id_inm = int(sel_inmueble.split(" - ")[0])
+                    
+                    with conectar_bd() as conn_l:
+                        df_deuda = pd.read_sql_query(
+                            "SELECT concepto, periodo_mes, periodo_anio, valor_capital FROM expensas_ph WHERE inmueble_id = %s", 
+                            conn_l, params=(id_inm,)
+                        )
+                    
+                    if df_deuda.empty:
+                        st.warning("No hay deudas registradas para este inmueble.")
                     else:
-                        try:
-                            id_inm_real = int(sel_inmueble.split(" - ")[0])
-                            import pandas as pd
+                        import calendar
+                        
+                        # Agrupamos por si hay varias deudas en un mismo mes
+                        df_agrupado = df_deuda.groupby(['periodo_anio', 'periodo_mes', 'concepto'])['valor_capital'].sum().unstack(fill_value=0).reset_index()
+                        
+                        if 'Expensa Ordinaria' not in df_agrupado.columns: df_agrupado['Expensa Ordinaria'] = 0
+                        if 'Cuota Extraordinaria' not in df_agrupado.columns: df_agrupado['Cuota Extraordinaria'] = 0
+                        
+                        df_agrupado = df_agrupado.sort_values(by=['periodo_anio', 'periodo_mes'])
+                        
+                        tasa_decimal = tasa_input / 100.0
+                        resultados = []
+                        cap_acumulado = 0
+                        int_acumulado = 0
+                        
+                        primer_anio = int(df_agrupado['periodo_anio'].min())
+                        primer_mes = int(df_agrupado[df_agrupado['periodo_anio'] == primer_anio]['periodo_mes'].min())
+                        
+                        # Creamos una línea de tiempo continua desde la primera deuda hasta la fecha de corte
+                        fecha_actual_loop = datetime.date(primer_anio, primer_mes, 1)
+                        
+                        while fecha_actual_loop <= fecha_corte:
+                            y = fecha_actual_loop.year
+                            m = fecha_actual_loop.month
                             
-                            # Leer el archivo dependiendo de su formato
-                            if archivo_cuotas.name.endswith('.csv'):
-                                df_c = pd.read_csv(archivo_cuotas)
+                            _, last_day = calendar.monthrange(y, m)
+                            
+                            # Si llegamos al mes de corte, calculamos solo hasta el día de corte
+                            if y == fecha_corte.year and m == fecha_corte.month:
+                                dias = fecha_corte.day
+                                hasta = fecha_corte
                             else:
-                                df_c = pd.read_excel(archivo_cuotas)
+                                dias = last_day
+                                hasta = datetime.date(y, m, last_day)
+                                
+                            desde = datetime.date(y, m, 1)
                             
-                            # Limpieza para encontrar las columnas sin importar mayúsculas
-                            df_c.columns = df_c.columns.str.strip().str.upper()
+                            fila = df_agrupado[(df_agrupado['periodo_anio'] == y) & (df_agrupado['periodo_mes'] == m)]
+                            ord_val = fila['Expensa Ordinaria'].values[0] if not fila.empty else 0
+                            ext_val = fila['Cuota Extraordinaria'].values[0] if not fila.empty else 0
                             
-                            if 'DESDE' not in df_c.columns:
-                                st.error("❌ El archivo no parece ser el reporte de la administración. Falta la columna 'Desde'.")
+                            cap_mes = ord_val + ext_val
+                            cap_acumulado += cap_mes
+                            
+                            # Fórmula mixta judicial: Capital * Tasa * (Días/30)
+                            if cap_acumulado > 0:
+                                interes_mes = cap_acumulado * tasa_decimal * (dias / 30.0)
                             else:
-                                # Filtrar la fila de 'TOTAL' si viene en el Excel
-                                df_c = df_c[df_c['DESDE'].astype(str).str.upper() != 'TOTAL']
-                                df_c['DESDE'] = pd.to_datetime(df_c['DESDE'], errors='coerce')
+                                interes_mes = 0
                                 
-                                expensas_creadas = 0
+                            int_acumulado += interes_mes
+                            cap_mas_int = cap_acumulado + interes_mes # Total solo de esa fila
+                            
+                            resultados.append({
+                                'Desde': desde.strftime('%Y-%m-%d'),
+                                'Hasta': hasta.strftime('%Y-%m-%d'),
+                                '% Int Mora': f"{tasa_input}%",
+                                'ORDINARIAS': ord_val if ord_val > 0 else None,
+                                'EXTRAORDINARIAS': ext_val if ext_val > 0 else None,
+                                'Capital Liquidable': cap_acumulado if cap_acumulado > 0 else None,
+                                'Días': dias,
+                                'Intereses': interes_mes,
+                                'Abonos': 0,
+                                'Cap + Int': cap_mas_int
+                            })
+                            
+                            if m == 12:
+                                fecha_actual_loop = datetime.date(y + 1, 1, 1)
+                            else:
+                                fecha_actual_loop = datetime.date(y, m + 1, 1)
                                 
-                                with conectar_bd() as conn_masiva_exp:
-                                    cursor = conn_masiva_exp.cursor()
-                                    
-                                    for idx, row in df_c.iterrows():
-                                        if pd.isna(row['DESDE']): continue
-                                        
-                                        mes = row['DESDE'].month
-                                        anio = row['DESDE'].year
-                                        fecha_v = row['DESDE'].strftime('%Y-%m-%d') # Usamos la fecha de inicio como corte
-                                        
-                                        # Procesar Cuotas ORDINARIAS
-                                        if 'ORDINARIAS' in df_c.columns and pd.notna(row['ORDINARIAS']) and float(row['ORDINARIAS']) > 0:
-                                            cursor.execute(
-                                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
-                                                (id_inm_real, 'Expensa Ordinaria', mes, anio, float(row['ORDINARIAS']), fecha_v)
-                                            )
-                                            expensas_creadas += 1
-                                            
-                                        # Procesar Cuotas EXTRAORDINARIAS (Si las hay)
-                                        if 'EXTRAORDINARIAS' in df_c.columns and pd.notna(row['EXTRAORDINARIAS']) and float(row['EXTRAORDINARIAS']) > 0:
-                                            cursor.execute(
-                                                "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
-                                                (id_inm_real, 'Cuota Extraordinaria', mes, anio, float(row['EXTRAORDINARIAS']), fecha_v)
-                                            )
-                                            expensas_creadas += 1
-                                            
-                                    conn_masiva_exp.commit()
-                                    
-                                st.session_state['toast_msg'] = f"¡Éxito! Se cargaron {expensas_creadas} cuotas exactas al inmueble."
-                                st.session_state['toast_icon'] = "✅"
-                                st.rerun()
-                                
-                        except Exception as e:
-                            st.error(f"Error procesando el archivo: {e}")
-
-            with col_der:
-                st.write("**Opción B: Carga Manual (1 a 1)**")
-                with st.form("form_nueva_expensa_manual", clear_on_submit=True):
-                    concepto_ph = st.selectbox("Concepto", ["Expensa Ordinaria", "Cuota Extraordinaria", "Multa / Sanción", "Otro"])
-                    
-                    from datetime import datetime
-                    c_e1, c_e2 = st.columns(2)
-                    mes_ph = c_e1.number_input("Mes (1-12)", min_value=1, max_value=12, value=datetime.now().month)
-                    anio_ph = c_e2.number_input("Año", min_value=2000, max_value=2100, value=datetime.now().year)
-                    capital_ph = st.number_input("Valor Capital ($)", min_value=0.0, step=10000.0)
-                    
-                    fv_ph = st.date_input("Fecha de Vencimiento de la Cuota")
-                    
-                    if st.form_submit_button("💾 Añadir Cuota Individual", use_container_width=True):
-                        if sel_inmueble and capital_ph > 0:
-                            id_inmueble_real = int(sel_inmueble.split(" - ")[0])
-                            with conectar_bd() as conn_exp:
-                                conn_exp.cursor().execute(
-                                    "INSERT INTO expensas_ph (inmueble_id, concepto, periodo_mes, periodo_anio, valor_capital, fecha_vencimiento) VALUES (%s, %s, %s, %s, %s, %s)",
-                                    (id_inmueble_real, concepto_ph, mes_ph, anio_ph, capital_ph, str(fv_ph))
-                                )
-                                conn_exp.commit()
-                            st.session_state['toast_msg'] = f"Expensa de {mes_ph}/{anio_ph} cargada."
-                            st.session_state['toast_icon'] = "✅"
-                            st.rerun()
-                        else:
-                            st.error("Seleccione un inmueble e ingrese un valor de capital válido.")
+                        df_res = pd.DataFrame(resultados)
+                        
+                        # --- CÁLCULO DE TOTALES ---
+                        total_capital = cap_acumulado
+                        total_intereses = df_res['Intereses'].sum()
+                        total_honorarios = (total_capital + total_intereses) * (honorarios_pct / 100.0)
+                        gran_total = total_capital + total_intereses + total_honorarios + gastos_cobranza
+                        
+                        # Mostrar la tabla idéntica a tu Excel
+                        st.subheader("Estado de Cuenta Detallado (Mes a Mes)")
+                        st.dataframe(df_res.style.format({
+                            'ORDINARIAS': "${:,.0f}",
+                            'EXTRAORDINARIAS': "${:,.0f}",
+                            'Capital Liquidable': "${:,.0f}",
+                            'Intereses': "${:,.0f}",
+                            'Cap + Int': "${:,.0f}"
+                        }), height=350, use_container_width=True)
+                        
+                        # Mostrar el Gran Resumen
+                        st.markdown("---")
+                        st.subheader("Resumen de Liquidación Final")
+                        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+                        
+                        col_r1.metric("1. CAPITAL", f"${total_capital:,.0f}")
+                        col_r2.metric("2. INTERESES", f"${total_intereses:,.0f}")
+                        col_r3.metric(f"3. HONORARIOS ({honorarios_pct}%)", f"${total_honorarios:,.0f}")
+                        col_r4.metric("4. GASTOS", f"${gastos_cobranza:,.0f}")
+                        col_r5.metric("TOTAL A PAGAR", f"${gran_total:,.0f}")
                         
         with sub_ph3:
             st.write("**🧮 Motor de Liquidación de Intereses a la Fecha**")
