@@ -1682,7 +1682,7 @@ elif menu == "Cartera":
             st.dataframe(df_prom, hide_index=True, use_container_width=True)
 
 # ==========================================
-# SECCIÓN 5: RESUMEN E INFORMES (EXCEL BLINDADO Y CRM)
+# SECCIÓN 5: RESUMEN E INFORMES (EXCEL BLINDADO Y CRM INTEGRADO)
 # ==========================================
 elif menu == "Informes":
     st.header("Informes y Exportación de Datos")
@@ -1698,12 +1698,12 @@ elif menu == "Informes":
     st.markdown(f"<div class='metric-card' style='max-width:300px;margin-bottom:25px;'><h2 style='color:#0a84ff;margin:0;'>📁 {total_p}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos en Base de Datos</p></div>", unsafe_allow_html=True)
     
     st.markdown("---")
-    st.subheader("Reporte General y CRM en Excel")
+    st.subheader("Reporte General y CRM en Excel (Unificado para IA)")
     output = io.BytesIO()
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         with conectar_bd() as conn_rep:
-            # A. Extraer datos crudos
+            # A. Extraer datos judiciales
             query_procesos = "SELECT p.*, a.nombre AS abogado_responsable FROM procesos p LEFT JOIN abogados a ON p.abogado_id = a.id"
             df_proc_r = pd.read_sql_query(query_procesos, conn_rep)
             df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC, id DESC", conn_rep)
@@ -1713,29 +1713,26 @@ elif menu == "Informes":
             
             # B. Extraer datos del CRM (Gestión de Cobranza)
             query_crm = """
-                SELECT g.fecha_hora, o.identificacion_deudor, c.nombre AS nombre_deudor, 
-                       o.capital, o.estado AS estado_cartera, g.tipo_contacto, 
-                       g.resumen, g.promesa_pago_fecha, g.usuario 
+                SELECT o.identificacion_deudor, o.estado AS estado_cartera, 
+                       g.fecha_hora, g.tipo_contacto, g.resumen, g.promesa_pago_fecha, g.usuario 
                 FROM gestiones_cartera g 
                 JOIN obligaciones o ON g.id_obligacion = o.id
-                LEFT JOIN contactos c ON o.identificacion_deudor = c.identificacion
                 ORDER BY g.fecha_hora DESC
             """
             df_crm_r = pd.read_sql_query(query_crm, conn_rep)
             
-            # CORRECCIÓN 1: Cruzar el Nombre del Demandante
+            # 1. Cruzar el Nombre del Demandante
             df_proc_r['nombre_demandante'] = df_proc_r['id_cliente'].apply(lambda x: obtener_nombres_demandantes(x, conn_rep))
 
-        # CORRECCIÓN 2: Lógica Implacable para la Etapa y Actuación (La verdad absoluta)
+        # 2. Lógica de Etapa y Actuación (Historial Judicial)
         actuaciones_consolidadas = {}
         etapa_real = {}
         ultima_actuacion = {}
         
         for rad in df_proc_r['radicado_interno']:
             acts_subset = df_act_r[df_act_r['radicado_interno'] == rad]
-            
             if not acts_subset.empty:
-                latest = acts_subset.iloc[0] # Toma el registro más reciente real
+                latest = acts_subset.iloc[0]
                 etapa_real[rad] = latest['etapa']
                 ultima_actuacion[rad] = latest['descripcion']
                 actuaciones_consolidadas[rad] = "\n".join([f"[{a['fecha']}] {a['etapa']} - {a['descripcion']} (Por: {a['usuario']})" for _, a in acts_subset.iterrows()])
@@ -1748,38 +1745,79 @@ elif menu == "Informes":
         df_proc_r['Ultima_Actuacion'] = df_proc_r['radicado_interno'].map(ultima_actuacion)
         df_proc_r['Historial_Actuaciones'] = df_proc_r['radicado_interno'].map(actuaciones_consolidadas)
         
-        # Ordenamos y limpiamos las columnas para que el Excel quede hermoso y corporativo
+        # 3. LÓGICA DE UNIFICACIÓN CRM -> PROCESOS JUDICIALES (Memoria IA)
+        historial_crm_dict = {}
+        estado_promesa_dict = {}
+        
+        if not df_crm_r.empty:
+            for cedula, grupo in df_crm_r.groupby('identificacion_deudor'):
+                # Crear historial de gestiones de este deudor específico
+                hist_str = "\n".join([f"[{row['fecha_hora']}] {row['tipo_contacto']}: {row['resumen']} (Por: {row['usuario']})" for _, row in grupo.iterrows()])
+                historial_crm_dict[cedula] = hist_str
+                
+                # Extraer última promesa o estado (La primera fila porque ordenamos DESC)
+                ultima_gestion = grupo.iloc[0]
+                if pd.notna(ultima_gestion['promesa_pago_fecha']) and str(ultima_gestion['promesa_pago_fecha']).strip() != "":
+                    estado_promesa_dict[cedula] = f"PROMESA VIGENTE: {ultima_gestion['promesa_pago_fecha']} ({ultima_gestion['estado_cartera']})"
+                else:
+                    estado_promesa_dict[cedula] = str(ultima_gestion['estado_cartera'])
+
+        # Función para inyectar el CRM a los demandados (Soporta Litisconsorcio)
+        def mapear_crm(id_demandados_str, diccionario, es_promesa=False):
+            if pd.isna(id_demandados_str) or id_demandados_str == "": 
+                return "Sin gestión" if es_promesa else "Sin historial CRM"
+                
+            ids = [i.strip() for i in str(id_demandados_str).split("|")]
+            resultados = []
+            
+            for i in ids:
+                if i in diccionario:
+                    if es_promesa:
+                        resultados.append(diccionario[i])
+                    else:
+                        resultados.append(f"--- GESTIÓN DE {i} ---\n{diccionario[i]}")
+                        
+            if not resultados:
+                return "Sin gestión" if es_promesa else "Sin historial CRM"
+                
+            return " | ".join(resultados) if es_promesa else "\n\n".join(resultados)
+
+        # Aplicamos la unificación
+        df_proc_r['Estado_Acuerdo_CRM'] = df_proc_r['id_demandado'].apply(lambda x: mapear_crm(x, estado_promesa_dict, True))
+        df_proc_r['Historial_Gestiones_CRM'] = df_proc_r['id_demandado'].apply(lambda x: mapear_crm(x, historial_crm_dict, False))
+
+        # Ordenamos y limpiamos las columnas (Uniendo el mundo Judicial y Extrajudicial)
         columnas_ordenadas = [
             'radicado_interno', 'radicado_rama', 'naturaleza', 'juzgado', 
             'id_cliente', 'nombre_demandante', 'id_demandado', 'demandado', 
             'estado', 'Etapa_Procesal_Real', 'Ultima_Actuacion', 'pretensiones', 
-            'medidas_cautelares', 'abogado_responsable', 'Historial_Actuaciones'
+            'medidas_cautelares', 'abogado_responsable', 'Historial_Actuaciones',
+            'Estado_Acuerdo_CRM', 'Historial_Gestiones_CRM' # <--- AQUÍ ESTÁ LA MEMORIA DE LA IA
         ]
-        # Filtramos solo las que existen para evitar errores si agregas columnas nuevas
+        
         columnas_ordenadas = [col for col in columnas_ordenadas if col in df_proc_r.columns]
         df_proc_r = df_proc_r[columnas_ordenadas]
         
-        # 3. SANITIZACIÓN ANTI-HACKEO (Prevención CSV/Excel Injection)
+        # 4. SANITIZACIÓN ANTI-HACKEO (Prevención CSV/Excel Injection)
         tablas_a_limpiar = [df_proc_r, df_crm_r, df_venc_r, df_gas_r, df_cont_r]
         for df_limpio in tablas_a_limpiar:
             for col in df_limpio.columns:
                 if df_limpio[col].dtype == 'object':
-                    # Si el texto empieza con caracteres ejecutables de Excel, se neutraliza
                     df_limpio[col] = df_limpio[col].apply(
                         lambda x: f"'{x}" if isinstance(x, str) and str(x).startswith(('=', '+', '-', '@')) else x
                     )
                     
-        # 4. EXPORTACIÓN A LAS HOJAS DEL EXCEL
-        df_proc_r.to_excel(writer, sheet_name='Procesos_Judiciales', index=False)
-        df_crm_r.to_excel(writer, sheet_name='CRM_Cobranza', index=False) # <--- Aquí vivirá lo del bot
+        # 5. EXPORTACIÓN A LAS HOJAS DEL EXCEL
+        df_proc_r.to_excel(writer, sheet_name='Procesos_Judiciales_y_CRM', index=False)
+        df_crm_r.to_excel(writer, sheet_name='CRM_Cobranza_Crudo', index=False)
         df_venc_r.to_excel(writer, sheet_name='Vencimientos', index=False)
         df_gas_r.to_excel(writer, sheet_name='Financiera_Costas', index=False)
         df_cont_r.to_excel(writer, sheet_name='Directorio', index=False)
         
     st.download_button(
-        label="📥 Descargar Reporte Ejecutivo (.xlsx)", 
+        label="📥 Descargar Reporte Ejecutivo Unificado (.xlsx)", 
         data=output.getvalue(), 
-        file_name=f"informe_inteligente_firma_{date.today()}.xlsx", 
+        file_name=f"informe_inteligente_unificado_{date.today()}.xlsx", 
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
         use_container_width=True
     )
