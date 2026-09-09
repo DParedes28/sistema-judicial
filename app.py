@@ -1751,23 +1751,27 @@ elif menu == "Informes":
         
         if not df_crm_r.empty:
             for cedula, grupo in df_crm_r.groupby('identificacion_deudor'):
+                # 🛑 CORRECCIÓN CLAVE 1: Forzar formato de texto puro sin decimales (.0)
+                cedula_str = str(cedula).replace('.0', '').strip()
+                
                 # Crear historial de gestiones de este deudor específico
                 hist_str = "\n".join([f"[{row['fecha_hora']}] {row['tipo_contacto']}: {row['resumen']} (Por: {row['usuario']})" for _, row in grupo.iterrows()])
-                historial_crm_dict[cedula] = hist_str
+                historial_crm_dict[cedula_str] = hist_str
                 
-                # Extraer última promesa o estado (La primera fila porque ordenamos DESC)
+                # Extraer última promesa o estado
                 ultima_gestion = grupo.iloc[0]
                 if pd.notna(ultima_gestion['promesa_pago_fecha']) and str(ultima_gestion['promesa_pago_fecha']).strip() != "":
-                    estado_promesa_dict[cedula] = f"PROMESA VIGENTE: {ultima_gestion['promesa_pago_fecha']} ({ultima_gestion['estado_cartera']})"
+                    estado_promesa_dict[cedula_str] = f"PROMESA VIGENTE: {ultima_gestion['promesa_pago_fecha']} ({ultima_gestion['estado_cartera']})"
                 else:
-                    estado_promesa_dict[cedula] = str(ultima_gestion['estado_cartera'])
+                    estado_promesa_dict[cedula_str] = str(ultima_gestion['estado_cartera'])
 
         # Función para inyectar el CRM a los demandados (Soporta Litisconsorcio)
         def mapear_crm(id_demandados_str, diccionario, es_promesa=False):
-            if pd.isna(id_demandados_str) or id_demandados_str == "": 
+            if pd.isna(id_demandados_str) or str(id_demandados_str).strip() == "": 
                 return "Sin gestión" if es_promesa else "Sin historial CRM"
                 
-            ids = [i.strip() for i in str(id_demandados_str).split("|")]
+            # 🛑 CORRECCIÓN CLAVE 2: Forzar limpieza al buscar en el diccionario
+            ids = [str(i).replace('.0', '').strip() for i in str(id_demandados_str).split("|")]
             resultados = []
             
             for i in ids:
@@ -1786,19 +1790,19 @@ elif menu == "Informes":
         df_proc_r['Estado_Acuerdo_CRM'] = df_proc_r['id_demandado'].apply(lambda x: mapear_crm(x, estado_promesa_dict, True))
         df_proc_r['Historial_Gestiones_CRM'] = df_proc_r['id_demandado'].apply(lambda x: mapear_crm(x, historial_crm_dict, False))
 
-        # Ordenamos y limpiamos las columnas (Uniendo el mundo Judicial y Extrajudicial)
+        # Ordenamos y limpiamos las columnas 
         columnas_ordenadas = [
             'radicado_interno', 'radicado_rama', 'naturaleza', 'juzgado', 
             'id_cliente', 'nombre_demandante', 'id_demandado', 'demandado', 
             'estado', 'Etapa_Procesal_Real', 'Ultima_Actuacion', 'pretensiones', 
             'medidas_cautelares', 'abogado_responsable', 'Historial_Actuaciones',
-            'Estado_Acuerdo_CRM', 'Historial_Gestiones_CRM' # <--- AQUÍ ESTÁ LA MEMORIA DE LA IA
+            'Estado_Acuerdo_CRM', 'Historial_Gestiones_CRM' 
         ]
         
         columnas_ordenadas = [col for col in columnas_ordenadas if col in df_proc_r.columns]
         df_proc_r = df_proc_r[columnas_ordenadas]
         
-        # 4. SANITIZACIÓN ANTI-HACKEO (Prevención CSV/Excel Injection)
+        # 4. SANITIZACIÓN ANTI-HACKEO 
         tablas_a_limpiar = [df_proc_r, df_crm_r, df_venc_r, df_gas_r, df_cont_r]
         for df_limpio in tablas_a_limpiar:
             for col in df_limpio.columns:
@@ -1807,7 +1811,7 @@ elif menu == "Informes":
                         lambda x: f"'{x}" if isinstance(x, str) and str(x).startswith(('=', '+', '-', '@')) else x
                     )
                     
-        # 5. EXPORTACIÓN A LAS HOJAS DEL EXCEL
+        # 5. EXPORTACIÓN A EXCEL
         df_proc_r.to_excel(writer, sheet_name='Procesos_Judiciales_y_CRM', index=False)
         df_crm_r.to_excel(writer, sheet_name='CRM_Cobranza_Crudo', index=False)
         df_venc_r.to_excel(writer, sheet_name='Vencimientos', index=False)
