@@ -1711,13 +1711,13 @@ elif menu == "Informes":
             df_gas_r = pd.read_sql_query("SELECT * FROM gastos", conn_rep)
             df_cont_r = pd.read_sql_query("SELECT * FROM contactos", conn_rep)
             
-            # B. Extraer datos del CRM (Gestión de Cobranza)
+            # B. Extraer datos del CRM unificado por cédula
             query_crm = """
-                SELECT o.identificacion_deudor, o.estado AS estado_cartera, 
-                       g.fecha_hora, g.tipo_contacto, g.resumen, g.promesa_pago_fecha, g.usuario 
-                FROM gestiones_cartera g 
-                JOIN obligaciones o ON g.id_obligacion = o.id
-                ORDER BY g.fecha_hora DESC
+                SELECT identificacion_deudor, 'En Cobro Activo' AS estado_cartera, 
+                       fecha_hora, tipo_contacto, resumen, promesa_pago_fecha, usuario 
+                FROM gestiones_cartera 
+                WHERE identificacion_deudor IS NOT NULL
+                ORDER BY fecha_hora DESC
             """
             df_crm_r = pd.read_sql_query(query_crm, conn_rep)
             
