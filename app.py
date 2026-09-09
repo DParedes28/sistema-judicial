@@ -1682,15 +1682,15 @@ elif menu == "Cartera":
             st.dataframe(df_prom, hide_index=True, use_container_width=True)
 
 # ==========================================
-# SECCIÓN 5: RESUMEN E INFORMES (EXCEL BLINDADO)
+# SECCIÓN 5: RESUMEN E INFORMES (EXCEL BLINDADO Y CRM)
 # ==========================================
 elif menu == "Informes":
     st.header("Informes y Exportación de Datos")
     
-    # 1. BARRERA DE SEGURIDAD (Solo Maestro puede exportar)
+    # 1. BARRERA DE SEGURIDAD EXFILTRACIÓN
     if usuario_rol != "Maestro":
         st.error("🔒 Acceso denegado: Tu perfil ('Abogado') no tiene permisos para descargar la base de datos corporativa. Contacta al Administrador Maestro.")
-        st.stop() # Detiene la renderización de la página para este usuario
+        st.stop()
         
     with conectar_bd() as conn:
         total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
@@ -1698,55 +1698,88 @@ elif menu == "Informes":
     st.markdown(f"<div class='metric-card' style='max-width:300px;margin-bottom:25px;'><h2 style='color:#0a84ff;margin:0;'>📁 {total_p}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos en Base de Datos</p></div>", unsafe_allow_html=True)
     
     st.markdown("---")
-    st.subheader("Reporte General en Excel (Exportación Segura)")
+    st.subheader("Reporte General y CRM en Excel")
     output = io.BytesIO()
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         with conectar_bd() as conn_rep:
-            # 2. CONSULTA ENRIQUECIDA (Incluye nombre de abogado y etapa clara)
-            query_procesos = """
-                SELECT p.*, a.nombre AS abogado_responsable 
-                FROM procesos p 
-                LEFT JOIN abogados a ON p.abogado_id = a.id
-            """
+            # A. Extraer datos crudos
+            query_procesos = "SELECT p.*, a.nombre AS abogado_responsable FROM procesos p LEFT JOIN abogados a ON p.abogado_id = a.id"
             df_proc_r = pd.read_sql_query(query_procesos, conn_rep)
-            df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC", conn_rep)
+            df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC, id DESC", conn_rep)
             df_venc_r = pd.read_sql_query("SELECT * FROM vencimientos", conn_rep)
             df_gas_r = pd.read_sql_query("SELECT * FROM gastos", conn_rep)
             df_cont_r = pd.read_sql_query("SELECT * FROM contactos", conn_rep)
-        
-        # Consolidar el historial de actuaciones en una sola celda
+            
+            # B. Extraer datos del CRM (Gestión de Cobranza)
+            query_crm = """
+                SELECT g.fecha_hora, o.identificacion_deudor, c.nombre AS nombre_deudor, 
+                       o.capital, o.estado AS estado_cartera, g.tipo_contacto, 
+                       g.resumen, g.promesa_pago_fecha, g.usuario 
+                FROM gestiones_cartera g 
+                JOIN obligaciones o ON g.id_obligacion = o.id
+                LEFT JOIN contactos c ON o.identificacion_deudor = c.identificacion
+                ORDER BY g.fecha_hora DESC
+            """
+            df_crm_r = pd.read_sql_query(query_crm, conn_rep)
+            
+            # CORRECCIÓN 1: Cruzar el Nombre del Demandante
+            df_proc_r['nombre_demandante'] = df_proc_r['id_cliente'].apply(lambda x: obtener_nombres_demandantes(x, conn_rep))
+
+        # CORRECCIÓN 2: Lógica Implacable para la Etapa y Actuación (La verdad absoluta)
         actuaciones_consolidadas = {}
+        etapa_real = {}
+        ultima_actuacion = {}
+        
         for rad in df_proc_r['radicado_interno']:
             acts_subset = df_act_r[df_act_r['radicado_interno'] == rad]
-            actuaciones_consolidadas[rad] = "\n".join([f"[{a['fecha']}] {a['etapa']} - {a['descripcion']} (Por: {a['usuario']})" for _, a in acts_subset.iterrows()])
             
+            if not acts_subset.empty:
+                latest = acts_subset.iloc[0] # Toma el registro más reciente real
+                etapa_real[rad] = latest['etapa']
+                ultima_actuacion[rad] = latest['descripcion']
+                actuaciones_consolidadas[rad] = "\n".join([f"[{a['fecha']}] {a['etapa']} - {a['descripcion']} (Por: {a['usuario']})" for _, a in acts_subset.iterrows()])
+            else:
+                etapa_real[rad] = "Sin actuaciones registradas"
+                ultima_actuacion[rad] = "N/A"
+                actuaciones_consolidadas[rad] = "Sin historial"
+                
+        df_proc_r['Etapa_Procesal_Real'] = df_proc_r['radicado_interno'].map(etapa_real)
+        df_proc_r['Ultima_Actuacion'] = df_proc_r['radicado_interno'].map(ultima_actuacion)
         df_proc_r['Historial_Actuaciones'] = df_proc_r['radicado_interno'].map(actuaciones_consolidadas)
         
-        # 3. SANITIZACIÓN ANTI-INYECCIÓN EXCEL/CSV
-        tablas_a_limpiar = [df_proc_r, df_venc_r, df_gas_r, df_cont_r, df_act_r]
+        # Ordenamos y limpiamos las columnas para que el Excel quede hermoso y corporativo
+        columnas_ordenadas = [
+            'radicado_interno', 'radicado_rama', 'naturaleza', 'juzgado', 
+            'id_cliente', 'nombre_demandante', 'id_demandado', 'demandado', 
+            'estado', 'Etapa_Procesal_Real', 'Ultima_Actuacion', 'pretensiones', 
+            'medidas_cautelares', 'abogado_responsable', 'Historial_Actuaciones'
+        ]
+        # Filtramos solo las que existen para evitar errores si agregas columnas nuevas
+        columnas_ordenadas = [col for col in columnas_ordenadas if col in df_proc_r.columns]
+        df_proc_r = df_proc_r[columnas_ordenadas]
+        
+        # 3. SANITIZACIÓN ANTI-HACKEO (Prevención CSV/Excel Injection)
+        tablas_a_limpiar = [df_proc_r, df_crm_r, df_venc_r, df_gas_r, df_cont_r]
         for df_limpio in tablas_a_limpiar:
             for col in df_limpio.columns:
                 if df_limpio[col].dtype == 'object':
-                    # Neutraliza fórmulas maliciosas de Excel
+                    # Si el texto empieza con caracteres ejecutables de Excel, se neutraliza
                     df_limpio[col] = df_limpio[col].apply(
                         lambda x: f"'{x}" if isinstance(x, str) and str(x).startswith(('=', '+', '-', '@')) else x
                     )
                     
-        # Renombramos para que sea evidente en el reporte final
-        df_proc_r.rename(columns={'etapa_actual': 'Etapa_Procesal_Actual'}, inplace=True)
-        
-        # Guardamos en las hojas del Excel
-        df_proc_r.to_excel(writer, sheet_name='Procesos', index=False)
+        # 4. EXPORTACIÓN A LAS HOJAS DEL EXCEL
+        df_proc_r.to_excel(writer, sheet_name='Procesos_Judiciales', index=False)
+        df_crm_r.to_excel(writer, sheet_name='CRM_Cobranza', index=False) # <--- Aquí vivirá lo del bot
         df_venc_r.to_excel(writer, sheet_name='Vencimientos', index=False)
-        df_gas_r.to_excel(writer, sheet_name='Gastos', index=False)
+        df_gas_r.to_excel(writer, sheet_name='Financiera_Costas', index=False)
         df_cont_r.to_excel(writer, sheet_name='Directorio', index=False)
-        df_act_r.to_excel(writer, sheet_name='Actuaciones', index=False)
         
     st.download_button(
         label="📥 Descargar Reporte Ejecutivo (.xlsx)", 
         data=output.getvalue(), 
-        file_name=f"informe_judicial_seguro_{date.today()}.xlsx", 
+        file_name=f"informe_inteligente_firma_{date.today()}.xlsx", 
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
         use_container_width=True
     )
