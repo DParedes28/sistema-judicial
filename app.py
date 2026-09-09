@@ -1682,26 +1682,40 @@ elif menu == "Cartera":
             st.dataframe(df_prom, hide_index=True, use_container_width=True)
 
 # ==========================================
-# SECCIÓN 5: RESUMEN E INFORMES (EXCEL)
+# SECCIÓN 5: RESUMEN E INFORMES (EXCEL BLINDADO)
 # ==========================================
 elif menu == "Informes":
     st.header("Informes y Exportación de Datos")
+    
+    # 1. BARRERA DE SEGURIDAD (Solo Maestro puede exportar)
+    if usuario_rol != "Maestro":
+        st.error("🔒 Acceso denegado: Tu perfil ('Abogado') no tiene permisos para descargar la base de datos corporativa. Contacta al Administrador Maestro.")
+        st.stop() # Detiene la renderización de la página para este usuario
+        
     with conectar_bd() as conn:
         total_p = pd.read_sql_query("SELECT COUNT(*) as c FROM procesos", conn).iloc[0]['c']
         
     st.markdown(f"<div class='metric-card' style='max-width:300px;margin-bottom:25px;'><h2 style='color:#0a84ff;margin:0;'>📁 {total_p}</h2><p style='color:#8e8e93;margin:5px 0 0 0;font-weight:500;'>Procesos en Base de Datos</p></div>", unsafe_allow_html=True)
     
     st.markdown("---")
-    st.subheader("Reporte General en Excel")
+    st.subheader("Reporte General en Excel (Exportación Segura)")
     output = io.BytesIO()
+    
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         with conectar_bd() as conn_rep:
-            df_proc_r = pd.read_sql_query("SELECT * FROM procesos", conn_rep)
+            # 2. CONSULTA ENRIQUECIDA (Incluye nombre de abogado y etapa clara)
+            query_procesos = """
+                SELECT p.*, a.nombre AS abogado_responsable 
+                FROM procesos p 
+                LEFT JOIN abogados a ON p.abogado_id = a.id
+            """
+            df_proc_r = pd.read_sql_query(query_procesos, conn_rep)
             df_act_r = pd.read_sql_query("SELECT * FROM actuaciones ORDER BY fecha DESC", conn_rep)
             df_venc_r = pd.read_sql_query("SELECT * FROM vencimientos", conn_rep)
             df_gas_r = pd.read_sql_query("SELECT * FROM gastos", conn_rep)
             df_cont_r = pd.read_sql_query("SELECT * FROM contactos", conn_rep)
         
+        # Consolidar el historial de actuaciones en una sola celda
         actuaciones_consolidadas = {}
         for rad in df_proc_r['radicado_interno']:
             acts_subset = df_act_r[df_act_r['radicado_interno'] == rad]
@@ -1709,13 +1723,33 @@ elif menu == "Informes":
             
         df_proc_r['Historial_Actuaciones'] = df_proc_r['radicado_interno'].map(actuaciones_consolidadas)
         
+        # 3. SANITIZACIÓN ANTI-INYECCIÓN EXCEL/CSV
+        tablas_a_limpiar = [df_proc_r, df_venc_r, df_gas_r, df_cont_r, df_act_r]
+        for df_limpio in tablas_a_limpiar:
+            for col in df_limpio.columns:
+                if df_limpio[col].dtype == 'object':
+                    # Neutraliza fórmulas maliciosas de Excel
+                    df_limpio[col] = df_limpio[col].apply(
+                        lambda x: f"'{x}" if isinstance(x, str) and str(x).startswith(('=', '+', '-', '@')) else x
+                    )
+                    
+        # Renombramos para que sea evidente en el reporte final
+        df_proc_r.rename(columns={'etapa_actual': 'Etapa_Procesal_Actual'}, inplace=True)
+        
+        # Guardamos en las hojas del Excel
         df_proc_r.to_excel(writer, sheet_name='Procesos', index=False)
         df_venc_r.to_excel(writer, sheet_name='Vencimientos', index=False)
         df_gas_r.to_excel(writer, sheet_name='Gastos', index=False)
         df_cont_r.to_excel(writer, sheet_name='Directorio', index=False)
         df_act_r.to_excel(writer, sheet_name='Actuaciones', index=False)
         
-    st.download_button(label="📥 Descargar Reporte Ejecutivo (.xlsx)", data=output.getvalue(), file_name=f"informe_judicial_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    st.download_button(
+        label="📥 Descargar Reporte Ejecutivo (.xlsx)", 
+        data=output.getvalue(), 
+        file_name=f"informe_judicial_seguro_{date.today()}.xlsx", 
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+        use_container_width=True
+    )
 
 # ==========================================
 # SECCIÓN 6: ADMINISTRACIÓN Y AUDITORÍA
